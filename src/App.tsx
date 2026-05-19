@@ -32,6 +32,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
 import { AtmosphericEffects } from './components/AtmosphericEffects';
+import { SoundtrackManager } from './components/SoundtrackManager';
 import { 
   signInWithPopup, 
   signOut, 
@@ -65,6 +66,7 @@ interface StoryNode {
   mediaType: 'image' | 'video';
   choices: Choice[];
   mood: string;
+  intensity: number;
   imageUrl?: string;
   videoUrl?: string;
 }
@@ -106,10 +108,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
+  const [hoveredStoryId, setHoveredStoryId] = useState<string | null>(null);
   const [allSteps, setAllSteps] = useState<any[]>([]);
   const [settings, setSettings] = useState({
     fontSize: 'md', // sm, md, lg
@@ -117,7 +119,9 @@ export default function App() {
     textAlign: 'left', // left, center, justify
     fontWeight: 'normal', // light, normal, bold
     typewriter: true,
-    showImages: true
+    showImages: true,
+    volume: 50,
+    isMuted: false
   });
 
   // Scroll to top on node change
@@ -133,8 +137,7 @@ export default function App() {
   }, [genre, currentNode]);
 
   const toggleMute = () => {
-    // const muted = audioManager.toggleMute();
-    setIsMuted(!isMuted);
+    setSettings(s => ({ ...s, isMuted: !s.isMuted }));
   };
 
   const fetchUserStories = async (uid: string) => {
@@ -185,7 +188,8 @@ export default function App() {
           choices: d.choices,
           imagePrompt: d.imagePrompt,
           mediaType: d.mediaType,
-          mood: d.mood || 'mystery'
+          mood: d.mood || 'mystery',
+          intensity: d.intensity || 3
         }));
         
         setAllSteps(steps);
@@ -203,6 +207,7 @@ export default function App() {
             imagePrompt: lastStep.imagePrompt || '',
             mediaType: lastStep.mediaType as any || 'image',
             mood: lastStep.mood,
+            intensity: lastStep.intensity || 3,
             imageUrl: lastStep.imageUrl,
             videoUrl: lastStep.videoUrl
           });
@@ -296,7 +301,8 @@ export default function App() {
           choices: d.choices,
           imagePrompt: d.imagePrompt,
           mediaType: d.mediaType,
-          mood: d.mood || 'mystery'
+          mood: d.mood || 'mystery',
+          intensity: d.intensity || 3
         }));
 
         setAllSteps(steps);
@@ -314,6 +320,7 @@ export default function App() {
             imagePrompt: lastStep.imagePrompt || '',
             mediaType: lastStep.mediaType as any || 'image',
             mood: lastStep.mood,
+            intensity: lastStep.intensity || 3,
             imageUrl: lastStep.imageUrl,
             videoUrl: lastStep.videoUrl
           });
@@ -351,6 +358,7 @@ export default function App() {
         imagePrompt: previousStep.imagePrompt || '',
         mediaType: previousStep.mediaType as any || 'image',
         mood: previousStep.mood,
+        intensity: previousStep.intensity || 3,
         imageUrl: previousStep.imageUrl,
         videoUrl: previousStep.videoUrl
       });
@@ -450,6 +458,8 @@ export default function App() {
           imagePrompt: data.imagePrompt,
           mediaType: data.mediaType,
           choices: data.choices,
+          mood: data.mood,
+          intensity: data.intensity,
           timestamp: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/stories/${storyRef.id}/steps`));
 
@@ -512,6 +522,8 @@ export default function App() {
         imagePrompt: data.imagePrompt,
         mediaType: data.mediaType,
         choices: data.choices,
+        mood: data.mood,
+        intensity: data.intensity,
         timestamp: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/stories/${currentStoryId}/steps`));
 
@@ -724,6 +736,13 @@ export default function App() {
   return (
     <div className={`min-h-screen transition-all duration-1000 ease-in-out ${themeClasses} overflow-x-hidden`}>
       <AtmosphericEffects genre={genre} />
+      <SoundtrackManager 
+        mood={currentNode?.mood} 
+        intensity={currentNode?.intensity} 
+        genre={genre}
+        volume={settings.volume}
+        isMuted={settings.isMuted}
+      />
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/40">
@@ -814,6 +833,33 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="space-y-4">
+                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Immersion (Music)</label>
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={toggleMute}
+                    className={`p-3 rounded-xl border transition-all ${
+                      settings.isMuted 
+                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                        : 'bg-white/5 border-white/5 text-white/40'
+                    }`}
+                  >
+                    {settings.isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  </button>
+                  <input 
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={settings.volume}
+                    onChange={(e) => setSettings(s => ({ ...s, volume: parseInt(e.target.value) }))}
+                    className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer ${
+                      genre === 'romance' ? 'bg-rose-100 accent-rose-500' : 'bg-white/10 accent-sky-500'
+                    }`}
+                  />
+                  <span className="text-[10px] font-mono opacity-40 w-8">{settings.volume}%</span>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
                 <div className="space-y-1">
                   <p className="text-xs font-bold uppercase tracking-widest">Visual Feedback</p>
@@ -854,42 +900,61 @@ export default function App() {
                   <p className="text-xs font-black uppercase tracking-[0.3em]">No stories woven yet</p>
                 </div>
               ) : (
-                userStories.map((story) => (
-                  <button
-                    key={story.id}
-                    onClick={() => loadStory(story.id)}
-                    className={`w-full text-left p-6 rounded-3xl border transition-all group flex items-center justify-between ${
-                      story.id === currentStoryId
-                        ? 'border-sky-500 bg-sky-500/10'
-                        : genre === 'romance' ? 'border-rose-100 hover:bg-rose-50' : 'border-white/5 hover:bg-white/5'
-                    }`}
-                  >
-                    <div className="flex items-center gap-6">
-                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
-                        story.genre === 'romance' ? 'bg-rose-100 text-rose-500' : story.genre === 'crime' ? 'bg-sky-900/40 text-sky-400' : 'bg-purple-900/40 text-purple-400'
-                      }`}>
-                        {story.genre === 'romance' ? <Heart className="w-8 h-8" /> : story.genre === 'crime' ? <Skull className="w-8 h-8" /> : <Moon className="w-8 h-8" />}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-black uppercase tracking-widest opacity-40">{story.genre || 'Unknown'}</p>
-                        <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
-                          {story.characterArchetype || 'Untitled Narrative'}
-                        </h4>
-                        <div className="flex gap-4 items-center">
-                          <span className="text-[10px] font-mono opacity-60">
-                            {story.updatedAt?.seconds ? new Date(story.updatedAt.seconds * 1000).toLocaleDateString() : 'Active'}
-                          </span>
-                          <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
-                             story.status === 'active' ? 'bg-green-500/20 text-green-500' : 'bg-gray-500/20 text-gray-500'
-                          }`}>
-                            {story.status}
-                          </span>
+                    userStories.map((story) => (
+                    <button
+                      key={story.id}
+                      onClick={() => loadStory(story.id)}
+                      onMouseEnter={() => setHoveredStoryId(story.id)}
+                      onMouseLeave={() => setHoveredStoryId(null)}
+                      className={`w-full text-left p-6 rounded-3xl border transition-all group relative flex items-center justify-between overflow-hidden ${
+                        story.id === currentStoryId
+                          ? 'border-sky-500 bg-sky-500/10'
+                          : genre === 'romance' ? 'border-rose-100 hover:bg-rose-50' : 'border-white/5 hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center gap-6 relative z-10">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
+                          story.genre === 'romance' ? 'bg-rose-100 text-rose-500' : story.genre === 'crime' ? 'bg-sky-900/40 text-sky-400' : 'bg-purple-900/40 text-purple-400'
+                        }`}>
+                          {story.genre === 'romance' ? <Heart className="w-8 h-8" /> : story.genre === 'crime' ? <Skull className="w-8 h-8" /> : <Moon className="w-8 h-8" />}
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs font-black uppercase tracking-widest opacity-40">{story.genre || 'Unknown'}</p>
+                          <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
+                            {story.characterArchetype || 'Untitled Narrative'}
+                          </h4>
+                          <div className="flex gap-4 items-center">
+                            <span className="text-[10px] font-mono opacity-60">
+                              {story.updatedAt?.seconds ? new Date(story.updatedAt.seconds * 1000).toLocaleDateString() : 'Active'}
+                            </span>
+                            <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
+                               story.status === 'active' ? 'bg-green-500/20 text-green-500' : 'bg-gray-500/20 text-gray-500'
+                            }`}>
+                              {story.status}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2" />
-                  </button>
-                ))
+                      <AnimatePresence>
+                        {hoveredStoryId === story.id && (
+                          <motion.div 
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                            className={`absolute right-12 left-[12rem] top-0 bottom-0 py-6 px-10 flex flex-col justify-center bg-transparent pointer-events-none hidden md:flex`}
+                          >
+                            <div className={`h-full border-l pl-6 flex flex-col justify-center ${genre === 'romance' ? 'border-rose-100' : 'border-white/10'}`}>
+                              <p className={`text-[10px] uppercase font-black tracking-widest opacity-30 mb-2`}>Premise Preview</p>
+                              <p className={`text-[11px] font-medium line-clamp-2 leading-relaxed italic ${genre === 'romance' ? 'text-rose-900/60' : 'text-white/40'}`}>
+                                {story.customBasis || story.backstory || "The tapestry of fate is yet to be fully revealed..."}
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2 shrink-0" />
+                    </button>
+                  ))
               )}
             </div>
           </div>
@@ -900,12 +965,12 @@ export default function App() {
         style={{ opacity: bgOpacity }}
         className={`fixed inset-0 pointer-events-none transition-opacity duration-1000 ${genre ? 'opacity-100' : 'opacity-0'}`}
       >
-        <div className={`absolute inset-0 max-w-7xl mx-auto blur-[120px] ${
+        <div className={`absolute inset-0 max-w-7xl mx-auto transition-all duration-1000 ${
           genre === 'romance' 
-            ? 'bg-[radial-gradient(circle_at_20%_30%,#fb7185_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#f43f5e_0%,transparent_50%)]' 
+            ? 'bg-[radial-gradient(circle_at_20%_30%,#fecdd3_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#fda4af_0%,transparent_50%)] blur-[80px]' 
             : genre === 'crime'
-            ? 'bg-[radial-gradient(circle_at_20%_30%,#1e293b_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#0f172a_0%,transparent_50%)]'
-            : 'bg-[radial-gradient(circle_at_20%_30%,#581c87_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#3b0764_0%,transparent_50%)]'
+            ? 'bg-[radial-gradient(circle_at_20%_30%,#0f172a_0%,transparent_40%),radial-gradient(circle_at_80%_70%,#1e293b_0%,transparent_40%),radial-gradient(circle_at_50%_50%,#020617_0%,transparent_60%)] blur-[150px]'
+            : 'bg-[radial-gradient(circle_at_20%_30%,#581c87_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#3b0764_0%,transparent_50%),radial-gradient(circle_at_50%_10%,#1e1b4b_0%,transparent_50%)] blur-[120px]'
         }`} />
       </div>
 
@@ -987,9 +1052,9 @@ export default function App() {
                 ? 'text-purple-400 hover:bg-purple-500/10'
                 : 'text-gray-400 hover:bg-white/5'
             }`}
-            title={isMuted ? "Unmute Ambient Sound" : "Mute Ambient Sound"}
+            title={settings.isMuted ? "Unmute Ambient Sound" : "Mute Ambient Sound"}
           >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {settings.isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
           {genre && (
             <button 

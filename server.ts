@@ -53,9 +53,10 @@ const StoryNodeSchema = {
         required: ["text", "nextContext"]
       }
     },
-    mood: { type: Type.STRING, enum: ["romance", "noir", "thriller", "mystery", "occult", "ethereal"] }
+    mood: { type: Type.STRING, enum: ["romance", "noir", "thriller", "mystery", "occult", "ethereal"] },
+    intensity: { type: Type.NUMBER, description: "A value from 1 to 5 representing the tension or emotional intensity of the scene." }
   },
-  required: ["sceneTitle", "sceneDescription", "imagePrompt", "mediaType", "choices", "mood"]
+  required: ["sceneTitle", "sceneDescription", "imagePrompt", "mediaType", "choices", "mood", "intensity"]
 };
 
 // API routes
@@ -92,6 +93,7 @@ app.post("/api/story/start", async (req, res) => {
     - sceneTitle: Atmospheric and thematic.
     - sceneDescription: 3-4 paragraphs of high-quality, mature prose.
     - imagePrompt: Art-house cinematic quality. Specify lighting (chiaroscuro, neon-drenched, ethereal), lens (anamorphic, macro), and mood.
+    - intensity: Scale from 1 (tranquil/quiet) to 5 (extreme action/high tension). This drives the soundtrack.
     - mediaType: "video" for beats of extreme tension, revelation, or visual spectacle (15-25% frequency).
     - choices: Must be difficult, reflecting the user's moral compass or tactical survival. 
     - nextContext: Detailed technical bridge for the next generation.

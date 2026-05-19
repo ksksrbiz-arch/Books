@@ -11,11 +11,11 @@ export const AtmosphericEffects: React.FC<AtmosphericEffectsProps> = ({ genre })
   const getColors = () => {
     switch (genre) {
       case 'romance':
-        return ['rgba(244, 63, 94, 0.2)', 'rgba(251, 113, 133, 0.1)', 'rgba(255, 192, 203, 0.3)'];
+        return ['rgba(255, 192, 203, 0.15)', 'rgba(251, 113, 133, 0.05)', 'rgba(254, 205, 211, 0.1)'];
       case 'crime':
-        return ['rgba(14, 165, 233, 0.1)', 'rgba(30, 41, 59, 0.2)', 'rgba(0, 0, 0, 0.4)'];
+        return ['rgba(15, 23, 42, 0.2)', 'rgba(30, 41, 59, 0.1)', 'rgba(2, 6, 23, 0.3)'];
       case 'paranormal':
-        return ['rgba(168, 85, 247, 0.2)', 'rgba(88, 28, 135, 0.3)', 'rgba(126, 34, 206, 0.1)'];
+        return ['rgba(88, 28, 135, 0.15)', 'rgba(59, 7, 100, 0.2)', 'rgba(30, 27, 75, 0.1)'];
       default:
         return ['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)'];
     }
