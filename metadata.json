@@ -1,0 +1,6 @@
+{
+  "name": "Echoes of Choice",
+  "description": "An AI-powered choose-your-own-adventure game featuring dynamically generated stories and visuals in the Romance and True Crime genres.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

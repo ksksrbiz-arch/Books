@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user" },
+        "email": { "type": "string", "description": "User's email address" },
+        "displayName": { "type": "string", "description": "User's display name" },
+        "photoURL": { "type": "string", "description": "User's profile photo URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "An interactive story session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner of the story" },
+        "genre": { "type": "string", "enum": ["romance", "crime", "paranormal"], "description": "Chosen genre" },
+        "status": { "type": "string", "enum": ["active", "completed"], "description": "Current status of the story" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["userId", "genre", "status", "createdAt", "updatedAt"]
+    },
+    "Step": {
+      "title": "Step",
+      "description": "A single step/scene in a story's history",
+      "type": "object",
+      "properties": {
+        "sceneTitle": { "type": "string", "description": "Title of the scene" },
+        "sceneDescription": { "type": "string", "description": "Description of the scene" },
+        "imageUrl": { "type": "string", "description": "URL of the generated image" },
+        "choiceTaken": { "type": "string", "description": "The choice the user took from the previous step" },
+        "imagePrompt": { "type": "string", "description": "The prompt used for the image" },
+        "choices": { "type": "array", "description": "The choices offered at this step" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When this step occurred" }
+      },
+      "required": ["sceneTitle", "sceneDescription", "timestamp"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Root user documents"
+    },
+    "users/{userId}/stories/{storyId}": {
+      "schema": "Story",
+      "description": "Collection of story sessions for a user"
+    },
+    "users/{userId}/stories/{storyId}/steps/{stepId}": {
+      "schema": "Step",
+      "description": "History of steps in a specific story"
+    }
+  }
+}
