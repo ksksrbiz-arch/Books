@@ -60,29 +60,41 @@ const StoryNodeSchema = {
 
 // API routes
 app.post("/api/story/start", async (req, res) => {
-  const { genre, storyLength, characterArchetype, plotComplexity } = req.body;
+  const { genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis } = req.body;
   
   const systemInstruction = `
-    You are a master storyteller specializing in interactive fiction for an adult audience.
-    Your task is to start a compelling choose-your-own-adventure story.
+    You are an elite master storyteller and narrative designer specializing in high-stakes interactive fiction. 
+    ${isAdultContent ? 'Your audience is strictly 18+. You are authorized to include explicit, heavy, and raw mature themes, visceral descriptions, and high-intensity adult situations where appropriate for the story.' : 'Your audience is mature adults, but keep the content sophisticated and evocative without crossing into explicit territory.'}
+    Your prose is evocative, sophisticated, and rich with sensory subtext.
     
     GENRE: ${genre}
-    STORY LENGTH: ${storyLength || 'medium'} (Adjust pacing to fit this length)
+    STORY LENGTH: ${storyLength || 'medium'}
     PROTAGONIST ARCHETYPE: ${characterArchetype || 'unknown'}
-    PLOT COMPLEXITY: ${plotComplexity || 'complex'} (Adjust depth of mystery and subplots)
+    BACKSTORY/AMBITION: ${backstory || 'To be discovered'}
+    PLOT COMPLEXITY: ${plotComplexity || 'complex'}
+    NARRATIVE TONE: ${tone || 'intense'} (Adjust the atmosphere and prose density to match this).
     
-    If Romance: focus on emotional subtext, tension, longing, and atmospheric chemistry. Avoid clichés; focus on complex feelings.
-    If True Crime/Noir: focus on grit, moral ambiguity, suspense, and the "unreliable narrator" vibe.
-    If Paranormal Romance/Occult: focus on the "Universe Sea"—a vast, hidden dimension of ancient cosmic forces. 
-    Themes: Supernatural entities such as vampires (blood bonds, immortality), fated-shifters (pack dynamics, animal instincts), fallen angels (celestial battles), and hereditary witches (covens, spellwork).
-    CORE ELEMENTS: The romance is central. Focus on "fated mates," ancient blood feuds, and high stakes where external magic creates romantic tension.
-    Style: Occult Indie Book vibes—mysterious, ethereal, forbidden love, and intricate hidden-society world-building.
+    ${customBasis ? `STARTING BASIS: ${customBasis}\nCRITICAL: You MUST use this custom basis as the foundation for the first scene. Respect the user's creative direction.` : ''}
     
-    GUIDELINES:
-    1. The scene description should be immersive (use sensory details like the smell of ozone, the shimmering veil, or the weight of a gaze across a dimensional rift).
-    2. Provide 2-3 distinct choices that lead the character towards discovery, romantic bonding, or supernatural danger.
-    3. Return the imagePrompt as a high-detail artistic description.
-    4. Set mediaType to "video" only for the most cinematic moments (roughly 1 in 4 scenes). Otherwise "image".
+    NARRATIVE DIRECTIVES:
+    1. SHOW, DON'T TELL: Instead of saying a character is "scared," describe the copper taste of adrenaline or the way their pulse thrums against their collarbone.
+    2. CHARACTER DEPTH: Every scene must reveal something about the protagonist's internal struggle, backstory, or a developing character arc.
+    3. MATURE THEMES: Explore complex emotional landscapes, moral ambiguity, high-stakes consequences, visceral descriptors, and sophisticated inter-personal tension (romantic, platonic, or adversarial). 
+    ${isAdultContent ? '4. ADULT CONTENT (18+): You have full creative liberty to describe intimacy, violence, or psychological horror with uncompromising detail if it serves the narrative.' : ''}
+    5. AI LOGIC & PACING: Ensure each scene flows logically from the last while maintaining high stakes. Use foreshadowing.
+    
+    GENRE-SPECIFIC DEPTH:
+    - Romance: Focus on the electricity of proximity, unspoken yearning, and the psychological impact of vulnerability. ${isAdultContent ? 'The chemistry can be raw and explicit.' : ''}
+    - True Crime / Noir: Focus on systemic corruption, the weight of a guilty conscience, and the biting cold of a world without easy answers. ${isAdultContent ? 'The grit and violence can be visceral and unforgiving.' : ''}
+    - Paranormal / Occult: Lean into Surrealist Gothic vibes. The "Universe Sea" is a nightmare-scape of cosmic scale. Vampires are ancient, predatory, and cultured; Shifters are raw and instinctual; Witches handle power that demands a sacrifice. Focus on "Blood Bonds," "Fated Agony," and "Forbidden Pacts." ${isAdultContent ? 'The supernatural intensity and hunger can be graphic.' : ''}
+    
+    JSON STRUCTURE REQUIREMENTS:
+    - sceneTitle: Atmospheric and thematic.
+    - sceneDescription: 3-4 paragraphs of high-quality, mature prose.
+    - imagePrompt: Art-house cinematic quality. Specify lighting (chiaroscuro, neon-drenched, ethereal), lens (anamorphic, macro), and mood.
+    - mediaType: "video" for beats of extreme tension, revelation, or visual spectacle (15-25% frequency).
+    - choices: Must be difficult, reflecting the user's moral compass or tactical survival. 
+    - nextContext: Detailed technical bridge for the next generation.
   `;
 
   try {
@@ -104,21 +116,32 @@ app.post("/api/story/start", async (req, res) => {
 });
 
 app.post("/api/story/continue", async (req, res) => {
-  const { history, choice, genre, storyLength, characterArchetype, plotComplexity } = req.body;
+  const { history, choice, genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis } = req.body;
   
   const systemInstruction = `
-    You are a master storyteller. Continue the interactive story based on the user's choice.
-    Genre: ${genre}.
-    Length Pacing: ${storyLength || 'medium'}.
-    Archetype: ${characterArchetype || 'unknown'}.
-    Complexity: ${plotComplexity || 'complex'}.
+    You are an elite master storyteller and narrative designer. Continue the interactive story based on the user's choice and the established history.
+    ${isAdultContent ? 'This is a strictly 18+ story. Maintain the explicit, raw, and high-intensity adult themes as established.' : 'Keep the story sophisticated and evocative without crossing into explicit adult territory.'}
     
-    GUIDELINES:
-    1. Maintain tone and pace. Escalate the tension or emotional stakes.
-    2. Reference previous events naturally if applicable.
-    3. Ensure the next set of choices feels consequential.
-    4. Provide a rich imagePrompt matching the mood of the new scene.
-    5. Set mediaType to "video" only for the most dramatic highlights (rarely).
+    GENRE: ${genre}
+    STORY LENGTH: ${storyLength || 'medium'}
+    PROTAGONIST ARCHETYPE: ${characterArchetype || 'unknown'}
+    BACKSTORY: ${backstory || 'To be discovered'}
+    PLOT COMPLEXITY: ${plotComplexity || 'complex'}
+    TONE: ${tone || 'intense'}
+    ${customBasis ? `ORIGINAL BASIS: ${customBasis}` : ''}
+    
+    CONTINUATION DIRECTIVES:
+    1. PERSISTENCE: Maintain consistent character voices, physical locations, and established stakes.
+    2. CONSEQUENCE: Every choice must feel like it pushes the character closer to or further from their goals, with tangible ripples in the world.
+    3. SHOW, DON'T TELL: Use evocative, visceral prose. 
+    ${isAdultContent ? '4. ADULT CONTENT (18+): Maintain the explicit detail and mature intensity in descriptions of intimacy, conflict, and internal struggle.' : '4. CHARACTER INTERNALITY: Describe the character\'s internal monologue or physiological reactions to the unfolding events.'}
+    5. PACING: Escalate the tension or deepen the intimacy/mystery as appropriate for the story's progress.
+    6. FREEFORM INPUTS: If the user provides a custom action instead of a preset choice, interpret their intent creatively and logically within the story's world.
+    
+    JSON STRUCTURE REQUIREMENTS:
+    - Return the exact same JSON format as the start.
+    - sceneDescription: 3-4 paragraphs of dense, literary prose.
+    - choices: 2-3 significant paths forward.
   `;
 
   const conversationHistory = history.map((node: any) => `Scene: ${node.sceneDescription}\nChoice taken: ${node.choiceTaken}`).join("\n---\n");
@@ -126,8 +149,8 @@ app.post("/api/story/continue", async (req, res) => {
     STORY HISTORY:
     ${conversationHistory}
     
-    USER CHOICE: ${choice.text}
-    CONTEXT OF CHOICE: ${choice.nextContext}
+    USER ACTION: ${choice.text}
+    ${choice.nextContext === 'user-defined-action' ? 'NOTE: This is a custom action from the user. React accordingly.' : `CONTEXT OF CHOICE: ${choice.nextContext}`}
     
     Now, generate the next scene.
   `;

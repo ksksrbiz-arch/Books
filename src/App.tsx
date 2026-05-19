@@ -72,6 +72,7 @@ interface StoryNode {
 type Genre = 'romance' | 'crime' | 'paranormal' | null;
 type StoryLength = 'short' | 'medium' | 'epic';
 type PlotComplexity = 'simple' | 'complex' | 'layered';
+type StoryTone = 'subtle' | 'intense' | 'experimental';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -80,12 +81,21 @@ export default function App() {
   const [storyParameters, setStoryParameters] = useState<{
     length: StoryLength;
     archetype: string;
+    backstory: string;
     complexity: PlotComplexity;
+    tone: StoryTone;
+    isAdultContent: boolean;
+    customBasis: string;
   }>({
     length: 'medium',
     archetype: '',
-    complexity: 'complex'
+    backstory: '',
+    complexity: 'complex',
+    tone: 'intense',
+    isAdultContent: false,
+    customBasis: ''
   });
+  const [customActionText, setCustomActionText] = useState('');
   const [showParameterSetup, setShowParameterSetup] = useState(false);
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
   const [history, setHistory] = useState<{sceneDescription: string, choiceTaken: string}[]>([]);
@@ -153,7 +163,11 @@ export default function App() {
         setStoryParameters({
           length: (storyData.storyLength as StoryLength) || 'medium',
           archetype: storyData.characterArchetype || '',
-          complexity: (storyData.plotComplexity as PlotComplexity) || 'complex'
+          backstory: storyData.backstory || '',
+          complexity: (storyData.plotComplexity as PlotComplexity) || 'complex',
+          tone: (storyData.tone as StoryTone) || 'intense',
+          isAdultContent: storyData.isAdultContent || false,
+          customBasis: storyData.customBasis || ''
         });
         
         // Fetch steps
@@ -261,7 +275,11 @@ export default function App() {
         setStoryParameters({
           length: (storyData.storyLength as StoryLength) || 'medium',
           archetype: storyData.characterArchetype || '',
-          complexity: (storyData.plotComplexity as PlotComplexity) || 'complex'
+          backstory: storyData.backstory || '',
+          complexity: (storyData.plotComplexity as PlotComplexity) || 'complex',
+          tone: (storyData.tone as StoryTone) || 'intense',
+          isAdultContent: storyData.isAdultContent || false,
+          customBasis: storyData.customBasis || ''
         });
 
         const stepsRef = collection(db, 'users', user.uid, 'stories', storyId, 'steps');
@@ -392,7 +410,11 @@ export default function App() {
           genre: g,
           storyLength: storyParameters.length,
           characterArchetype: storyParameters.archetype,
-          plotComplexity: storyParameters.complexity
+          backstory: storyParameters.backstory,
+          plotComplexity: storyParameters.complexity,
+          tone: storyParameters.tone,
+          isAdultContent: storyParameters.isAdultContent,
+          customBasis: storyParameters.customBasis
         }),
       });
       if (!response.ok) throw new Error('Failed to start story');
@@ -405,7 +427,11 @@ export default function App() {
         genre: genre,
         storyLength: storyParameters.length,
         characterArchetype: storyParameters.archetype,
+        backstory: storyParameters.backstory,
         plotComplexity: storyParameters.complexity,
+        tone: storyParameters.tone,
+        isAdultContent: storyParameters.isAdultContent,
+        customBasis: storyParameters.customBasis,
         status: 'active',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -460,7 +486,11 @@ export default function App() {
           genre: g,
           storyLength: storyParameters.length,
           characterArchetype: storyParameters.archetype,
-          plotComplexity: storyParameters.complexity
+          backstory: storyParameters.backstory,
+          plotComplexity: storyParameters.complexity,
+          tone: storyParameters.tone,
+          isAdultContent: storyParameters.isAdultContent,
+          customBasis: storyParameters.customBasis
         }),
       });
       if (!response.ok) throw new Error('Failed to continue story');
@@ -632,8 +662,13 @@ export default function App() {
     setStoryParameters({
       length: 'medium',
       archetype: '',
-      complexity: 'complex'
+      backstory: '',
+      complexity: 'complex',
+      tone: 'intense',
+      isAdultContent: false,
+      customBasis: ''
     });
+    setCustomActionText('');
     setShowParameterSetup(false);
     setCurrentNode(null);
     setHistory([]);
@@ -649,8 +684,37 @@ export default function App() {
     ? 'bg-[#0D0A14] text-[#DBCFEF] font-sans selection:bg-purple-900 selection:text-white cursor-help'
     : 'bg-[#050505] text-white font-sans';
 
-  const headingFont = genre === 'romance' ? 'font-serif italic' : genre === 'paranormal' ? 'font-serif italic tracking-wide' : 'font-display uppercase tracking-tight';
+  const headingFont = genre === 'romance' ? 'font-serif italic text-rose-950' : genre === 'paranormal' ? 'font-serif italic tracking-wide text-purple-100' : 'font-display uppercase tracking-tight text-white';
   const bodyFont = genre === 'romance' ? 'font-sans' : genre === 'paranormal' ? 'font-sans opacity-90' : 'font-mono';
+
+  const getGenreAccent = () => {
+    switch (genre) {
+      case 'romance': return 'rose';
+      case 'paranormal': return 'purple';
+      case 'crime': return 'sky';
+      default: return 'gray';
+    }
+  };
+
+  const accent = getGenreAccent();
+
+  const buttonPrimary = genre === 'romance' 
+    ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-200' 
+    : genre === 'paranormal' 
+    ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20' 
+    : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-900/20';
+
+  const buttonSecondary = genre === 'romance'
+    ? 'bg-rose-50 border-rose-100 text-rose-500 hover:bg-rose-100'
+    : genre === 'paranormal'
+    ? 'bg-purple-900/20 border-purple-500/20 text-purple-300 hover:bg-purple-900/40'
+    : 'bg-white/5 border-white/10 text-sky-400 hover:bg-white/10';
+
+  const cardBase = genre === 'romance'
+    ? 'bg-white/80 border-rose-100 shadow-xl shadow-rose-900/5'
+    : genre === 'paranormal'
+    ? 'bg-[#0a0510]/80 border-purple-500/10 shadow-2xl shadow-black'
+    : 'bg-black/60 border-white/5 shadow-2xl';
 
   const fontSizeClass = settings.fontSize === 'sm' ? 'text-sm' : settings.fontSize === 'lg' ? 'text-xl' : 'text-lg';
   const lineSpacingClass = settings.lineSpacing === 'tight' ? 'leading-tight' : settings.lineSpacing === 'relaxed' ? 'leading-relaxed' : 'leading-normal';
@@ -683,7 +747,7 @@ export default function App() {
                       onClick={() => setSettings(s => ({ ...s, fontSize: size }))}
                       className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                         settings.fontSize === size
-                          ? genre === 'romance' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-sky-500 border-sky-500 text-white'
+                          ? `bg-${accent}-500 border-${accent}-500 text-white`
                           : genre === 'romance' ? 'border-rose-100 text-rose-300 hover:bg-rose-50' : 'border-white/10 text-white/40 hover:bg-white/5'
                       }`}
                     >
@@ -702,7 +766,7 @@ export default function App() {
                       onClick={() => setSettings(s => ({ ...s, lineSpacing: spacing }))}
                       className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                         settings.lineSpacing === spacing
-                          ? genre === 'romance' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-sky-500 border-sky-500 text-white'
+                          ? `bg-${accent}-500 border-${accent}-500 text-white`
                           : genre === 'romance' ? 'border-rose-100 text-rose-300 hover:bg-rose-50' : 'border-white/10 text-white/40 hover:bg-white/5'
                       }`}
                     >
@@ -721,7 +785,7 @@ export default function App() {
                       onClick={() => setSettings(s => ({ ...s, textAlign: align }))}
                       className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                         settings.textAlign === align
-                          ? genre === 'romance' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-sky-500 border-sky-500 text-white'
+                          ? `bg-${accent}-500 border-${accent}-500 text-white`
                           : genre === 'romance' ? 'border-rose-100 text-rose-300 hover:bg-rose-50' : 'border-white/10 text-white/40 hover:bg-white/5'
                       }`}
                     >
@@ -740,7 +804,7 @@ export default function App() {
                       onClick={() => setSettings(s => ({ ...s, fontWeight: weight }))}
                       className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                         settings.fontWeight === weight
-                          ? genre === 'romance' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-sky-500 border-sky-500 text-white'
+                          ? `bg-${accent}-500 border-${accent}-500 text-white`
                           : genre === 'romance' ? 'border-rose-100 text-rose-300 hover:bg-rose-50' : 'border-white/10 text-white/40 hover:bg-white/5'
                       }`}
                     >
@@ -1069,18 +1133,15 @@ export default function App() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
-            className="flex-1 flex flex-col justify-center items-center max-w-2xl mx-auto w-full gap-8"
+            className={`flex-1 flex flex-col justify-center items-center max-w-2xl mx-auto w-full gap-8`}
           >
-            <div className="text-center space-y-4">
-              <h2 className={`text-4xl font-black uppercase tracking-tight ${genre === 'romance' ? 'text-rose-900 font-serif italic' : 'text-white'}`}>
-                Define Your Fate
-              </h2>
-              <p className="text-gray-500 font-medium">Configure the tapestry of your story before we weave it.</p>
-            </div>
-
-            <div className={`w-full p-8 rounded-[2rem] border space-y-8 ${
-              genre === 'romance' ? 'bg-white border-rose-100 shadow-xl' : 'bg-white/5 border-white/10 backdrop-blur-xl'
-            }`}>
+            <div className={`w-full p-10 rounded-[3rem] border space-y-10 transition-all duration-700 ${cardBase}`}>
+              <div className="text-center space-y-4">
+                <h2 className={`text-4xl font-black uppercase tracking-tight ${genre === 'romance' ? 'text-rose-950 font-serif italic' : genre === 'paranormal' ? 'text-purple-100 font-serif' : 'text-white'}`}>
+                  Define Your Fate
+                </h2>
+                <p className={`text-[10px] uppercase font-black tracking-[0.4em] opacity-30 ${genre === 'romance' ? 'text-rose-900' : 'text-white'}`}>The tapestry of your journey</p>
+              </div>
               <div className="space-y-4">
                 <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Character Archetype</label>
                 <input 
@@ -1094,6 +1155,55 @@ export default function App() {
                       : 'border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20'
                   }`}
                 />
+              </div>
+
+              <div className="space-y-4">
+                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Backstory & Ambition (Character Building)</label>
+                <textarea 
+                  placeholder="What haunts them? What do they desire most? (e.g. They lost their sister to the sea and seek the truth at any cost...)"
+                  value={storyParameters.backstory}
+                  onChange={(e) => setStoryParameters(p => ({ ...p, backstory: e.target.value }))}
+                  rows={3}
+                  className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none ${
+                    genre === 'romance' 
+                      ? 'border-rose-100 focus:border-rose-300 focus:ring-rose-100 text-rose-900 placeholder:text-rose-200' 
+                      : 'border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20'
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Custom Narrative Foundation (Optional Basis)</label>
+                <textarea 
+                  placeholder="Set the initial scene or premise... (e.g. On a rainy night in Neo-Tokyo, a mysterious courier delivers a package...)"
+                  value={storyParameters.customBasis}
+                  onChange={(e) => setStoryParameters(p => ({ ...p, customBasis: e.target.value }))}
+                  rows={4}
+                  className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none ${
+                    genre === 'romance' 
+                      ? 'border-rose-100 focus:border-rose-300 focus:ring-rose-100 text-rose-900 placeholder:text-rose-200' 
+                      : 'border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20'
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Narrative Tone (AI Logic Style)</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['subtle', 'intense', 'experimental'] as StoryTone[]).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setStoryParameters(p => ({ ...p, tone: t }))}
+                      className={`p-3 text-center rounded-xl border text-[10px] font-bold uppercase tracking-widest transition-all ${
+                        storyParameters.tone === t
+                          ? genre === 'romance' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-sky-500 border-sky-500 text-white'
+                          : genre === 'romance' ? 'border-rose-100 text-rose-300 hover:bg-rose-50' : 'border-white/10 text-white/40 hover:bg-white/5'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1146,11 +1256,26 @@ export default function App() {
 
               {error && <p className="text-red-500 text-[10px] font-bold uppercase text-center">{error}</p>}
 
+              <div className="flex items-center justify-between p-6 rounded-[1.5rem] border transition-all bg-white/5 border-white/5">
+                <div className="space-y-1">
+                  <p className="text-xs font-black uppercase tracking-widest">Adult Themes (18+)</p>
+                  <p className="text-[10px] opacity-40">Enable more explicit, raw, and high-intensity adult content.</p>
+                </div>
+                <button 
+                  onClick={() => setStoryParameters(p => ({ ...p, isAdultContent: !p.isAdultContent }))}
+                  className={`w-14 h-8 rounded-full relative transition-all duration-300 ${
+                    storyParameters.isAdultContent ? 'bg-rose-500' : 'bg-white/10'
+                  }`}
+                >
+                  <div className={`absolute top-1 w-6 h-6 rounded-full bg-white shadow-lg transition-all duration-300 ${
+                    storyParameters.isAdultContent ? 'left-7' : 'left-1'
+                  }`} />
+                </button>
+              </div>
+
               <button
                 onClick={confirmStartStory}
-                className={`w-full py-5 rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-3 ${
-                  genre === 'romance' ? 'bg-rose-500 text-white' : 'bg-white text-black'
-                }`}
+                className={`w-full py-5 rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 ${buttonPrimary}`}
               >
                 <Zap className="w-5 h-5" />
                 Begin Narrative
@@ -1158,9 +1283,9 @@ export default function App() {
               
               <button 
                 onClick={() => setGenre(null)}
-                className="w-full text-[10px] font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity"
+                className={`w-full py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${buttonSecondary}`}
               >
-                Go Back
+                Change Genre
               </button>
             </div>
           </motion.div>
@@ -1215,14 +1340,15 @@ export default function App() {
                 <motion.div 
                   initial={{ scale: 0.98, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="relative group"
+                  className={`p-1 rounded-[2.5rem] ${cardBase}`}
                 >
-                  <div className={`absolute inset-0 blur-3xl opacity-20 -z-10 group-hover:opacity-40 transition-opacity duration-1000 ${
-                    genre === 'romance' ? 'bg-rose-400' : 'bg-sky-900'
-                  }`} />
-                  <div className={`relative w-full aspect-video md:aspect-[21/9] rounded-[2.5rem] overflow-hidden flex items-center justify-center shadow-2xl border transition-all duration-700 ${
-                    genre === 'romance' ? 'bg-rose-50 border-rose-100/50' : genre === 'paranormal' ? 'bg-[#1a1025] border-purple-500/10' : 'bg-black border-white/5'
-                  }`}>
+                  <div className="relative group">
+                    <div className={`absolute inset-0 blur-3xl opacity-20 -z-10 group-hover:opacity-40 transition-opacity duration-1000 ${
+                      genre === 'romance' ? 'bg-rose-400' : genre === 'paranormal' ? 'bg-purple-600' : 'bg-sky-900'
+                    }`} />
+                    <div className={`relative w-full aspect-video md:aspect-[21/9] rounded-[2.5rem] overflow-hidden flex items-center justify-center shadow-2xl border transition-all duration-700 ${
+                      genre === 'romance' ? 'bg-rose-50 border-rose-100/50' : genre === 'paranormal' ? 'bg-[#1a1025] border-purple-500/10' : 'bg-black border-white/5'
+                    }`}>
                     {currentNode.mediaType === 'video' && currentNode.videoUrl ? (
                       <video 
                         src={currentNode.videoUrl} 
@@ -1288,7 +1414,8 @@ export default function App() {
                        </div>
                     </div>
                   </div>
-                </motion.div>
+                </div>
+              </motion.div>
 
                 {/* Content Layout */}
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-16 lg:gap-24">
@@ -1339,13 +1466,9 @@ export default function App() {
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               onClick={goBack}
-                              className={`group w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4 ${
-                                genre === 'romance' 
-                                  ? 'border-rose-100 hover:bg-rose-50 text-rose-400' 
-                                  : 'border-white/10 hover:bg-white/5 text-gray-500'
-                              }`}
+                              className={`group w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4 ${buttonSecondary}`}
                             >
-                              <div className={`p-2 rounded-lg ${genre === 'romance' ? 'bg-rose-50' : 'bg-white/5'}`}>
+                              <div className={`p-2 rounded-lg ${genre === 'romance' ? 'bg-rose-50 text-rose-500' : genre === 'paranormal' ? 'bg-purple-900/40 text-purple-400' : 'bg-white/5 text-sky-400'}`}>
                                 <ArrowLeft className="w-4 h-4" />
                               </div>
                               <span className="text-[10px] font-black uppercase tracking-widest">Step Back in Time</span>
@@ -1358,24 +1481,51 @@ export default function App() {
                               animate={{ opacity: 1, x: 0 }}
                               transition={{ delay: idx * 0.1 }}
                               onClick={() => handleChoice(choice)}
-                              className={`group relative p-6 text-left border rounded-3xl transition-all duration-500 transform active:scale-95 ${
-                                genre === 'romance' 
-                                  ? 'bg-white border-rose-100 hover:border-rose-400 hover:shadow-lg hover:shadow-rose-100 text-rose-950' 
-                                  : genre === 'paranormal'
-                                  ? 'bg-black/60 border-purple-500/10 hover:border-purple-400/50 hover:bg-black/80 text-purple-100'
-                                  : 'bg-black/40 border-white/5 hover:border-sky-500/50 hover:bg-black/60 text-white'
-                              }`}
+                              className={`group relative p-6 text-left border rounded-3xl transition-all duration-500 transform active:scale-95 ${cardBase} hover:border-${accent}-500/50`}
                             >
                               <div className="flex items-start gap-4">
                                 <div className={`mt-1.5 w-1.5 h-1.5 rounded-full transition-all duration-500 group-hover:scale-150 ${
                                   genre === 'romance' ? 'bg-rose-300 group-hover:bg-rose-500' : genre === 'paranormal' ? 'bg-purple-600 group-hover:bg-purple-400' : 'bg-sky-900 group-hover:bg-sky-400'
                                 }`} />
-                                <span className={`flex-1 font-bold leading-tight ${genre === 'romance' ? 'text-base' : 'text-sm font-sans'}`}>
+                                <span className={`flex-1 font-bold leading-tight ${genre === 'romance' ? 'text-rose-950 text-base' : 'text-white text-sm font-sans'}`}>
                                   {choice.text}
                                 </span>
                               </div>
                             </motion.button>
                           ))}
+
+                          <div className="pt-6 border-t border-white/5 mt-4 space-y-4">
+                            <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Your Freeform Action</label>
+                            <div className="relative">
+                              <textarea
+                                value={customActionText}
+                                onChange={(e) => setCustomActionText(e.target.value)}
+                                placeholder="Describe your own action..."
+                                className={`w-full p-4 pr-12 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-[11px] font-medium ${
+                                  genre === 'romance' 
+                                    ? 'border-rose-100 focus:border-rose-300 text-rose-900 placeholder:text-rose-200' 
+                                    : 'border-white/10 focus:border-sky-400 text-white placeholder:text-white/20'
+                                }`}
+                                rows={2}
+                              />
+                              <button
+                                onClick={() => {
+                                  if (customActionText.trim()) {
+                                    handleChoice({ text: customActionText, nextContext: 'user-defined-action' });
+                                    setCustomActionText('');
+                                  }
+                                }}
+                                disabled={!customActionText.trim() || loading}
+                                className={`absolute right-3 bottom-3 p-2 rounded-xl transition-all ${
+                                  customActionText.trim() 
+                                    ? genre === 'romance' ? 'bg-rose-500 text-white' : 'bg-sky-500 text-white'
+                                    : 'bg-white/5 text-white/20 opacity-50 cursor-not-allowed'
+                                }`}
+                              >
+                                <Zap className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       ) : (
                         <div className="flex flex-col items-center gap-6 py-12 text-center">
@@ -1393,7 +1543,7 @@ export default function App() {
             )}
           </div>
         )}
-        </AnimatePresence>
+      </AnimatePresence>
       </main>
 
       {/* History Sidebar - Optional toggle */}
