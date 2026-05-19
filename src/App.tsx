@@ -127,9 +127,44 @@ export default function App() {
   // Scroll to top on node change
   const contentRef = useRef<HTMLDivElement>(null);
   
-  // Parallax disabled to debug white screen
-  const bgY = 0;
-  const bgOpacity = 0.2;
+  // Typewriter effect hook
+  function useTypewriter(text: string, speed: number = 20, enabled: boolean = true) {
+    const [displayedText, setDisplayedText] = useState('');
+    const [isComplete, setIsComplete] = useState(false);
+
+    useEffect(() => {
+      if (!enabled) {
+        setDisplayedText(text);
+        setIsComplete(true);
+        return;
+      }
+
+      setDisplayedText('');
+      setIsComplete(false);
+      let index = 0;
+      const interval = setInterval(() => {
+        if (index < text.length) {
+          setDisplayedText((prev) => prev + text.charAt(index));
+          index++;
+        } else {
+          setIsComplete(true);
+          clearInterval(interval);
+        }
+      }, speed);
+
+      return () => clearInterval(interval);
+    }, [text, speed, enabled]);
+
+    return { displayedText, isComplete };
+  }
+
+  const { displayedText: typewriterText, isComplete: typewriterComplete } = useTypewriter(
+    currentNode?.sceneDescription || '', 
+    15, 
+    settings.typewriter
+  );
+
+  const bgOpacity = genre === 'romance' ? 0.3 : 0.6;
 
   // Audio effect disabled to debug white screen
   useEffect(() => {
@@ -1356,51 +1391,64 @@ export default function App() {
           </motion.div>
         ) : (
           <div className="flex-1 flex flex-col relative" ref={contentRef}>
-            {!currentNode && !loading && genre && (
-              <div className="flex-1 flex flex-col items-center justify-center gap-8">
-                <Loader2 className={`w-12 h-12 animate-spin ${genre === 'romance' ? 'text-rose-200' : 'text-sky-900'}`} />
-                <p className="text-[10px] font-black uppercase tracking-widest opacity-40">Resuming Narrative...</p>
-              </div>
-            )}
-
-            {loading && !currentNode && (
-              <motion.div 
-                key="loading-node"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex-1 flex flex-col items-center justify-center gap-8"
-              >
-                <div 
-                  className={`w-20 h-20 rounded-[2rem] flex items-center justify-center border-2 ${
-                    genre === 'romance' ? 'border-rose-100' : 'border-white/10'
-                  }`}
+            <AnimatePresence mode="wait">
+              {!currentNode && !loading && genre && (
+                <motion.div 
+                  key="resuming"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex-1 flex flex-col items-center justify-center gap-8"
                 >
-                  <Sparkles className={`w-8 h-8 ${genre === 'romance' ? 'text-rose-400' : 'text-sky-400'}`} />
-                </div>
-                <div className="text-center space-y-2">
-                  <h3 className="font-black text-2xl tracking-tight uppercase">Spinning Reality</h3>
-                  <p className="text-sm opacity-40 font-mono tracking-widest uppercase">The universe is listening...</p>
-                </div>
-              </motion.div>
-            )}
+                  <Loader2 className={`w-12 h-12 animate-spin ${genre === 'romance' ? 'text-rose-200' : 'text-sky-900'}`} />
+                  <p className="text-[10px] font-black uppercase tracking-widest opacity-40">Resuming Narrative...</p>
+                </motion.div>
+              )}
 
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-3xl text-red-500 text-sm mb-12 flex items-center justify-between">
-                <span>{error}</span>
-                <button onClick={() => genre && startStory(genre)} className="font-black uppercase tracking-widest text-[10px] bg-red-500 text-white px-4 py-2 rounded-full">Retry Connection</button>
-              </div>
-            )}
+              {loading && !currentNode && (
+                <motion.div 
+                  key="loading-node"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex-1 flex flex-col items-center justify-center gap-8"
+                >
+                  <div 
+                    className={`w-20 h-20 rounded-[2rem] flex items-center justify-center border-2 ${
+                      genre === 'romance' ? 'border-rose-100' : 'border-white/10'
+                    }`}
+                  >
+                    <Sparkles className={`w-8 h-8 ${genre === 'romance' ? 'text-rose-400' : 'text-sky-400'}`} />
+                  </div>
+                  <div className="text-center space-y-2">
+                    <h3 className="font-black text-2xl tracking-tight uppercase">Spinning Reality</h3>
+                    <p className="text-sm opacity-40 font-mono tracking-widest uppercase">The universe is listening...</p>
+                  </div>
+                </motion.div>
+              )}
 
-            {currentNode && (
-              <motion.div 
-                key={currentNode.sceneTitle || allSteps.length}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.5, ease: "easeInOut" }}
-                className="flex flex-col gap-12 pb-32"
-              >
+              {error && (
+                <motion.div 
+                  key="error"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="bg-red-500/10 border border-red-500/20 p-6 rounded-3xl text-red-500 text-sm mb-12 flex items-center justify-between"
+                >
+                  <span>{error}</span>
+                  <button onClick={() => genre && startStory(genre)} className="font-black uppercase tracking-widest text-[10px] bg-red-500 text-white px-4 py-2 rounded-full">Retry Connection</button>
+                </motion.div>
+              )}
+
+              {currentNode && (
+                <motion.div 
+                  key={currentNode.sceneTitle || allSteps.length}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+                  className="flex flex-col gap-12 pb-32"
+                >
                 {/* Scene Visual Container */}
                 <motion.div 
                   initial={{ scale: 0.98, opacity: 0 }}
@@ -1414,8 +1462,9 @@ export default function App() {
                     <div className={`relative w-full aspect-video md:aspect-[21/9] rounded-[2.5rem] overflow-hidden flex items-center justify-center shadow-2xl border transition-all duration-700 ${
                       genre === 'romance' ? 'bg-rose-50 border-rose-100/50' : genre === 'paranormal' ? 'bg-[#1a1025] border-purple-500/10' : 'bg-black border-white/5'
                     }`}>
-                    {currentNode.mediaType === 'video' && currentNode.videoUrl ? (
+                    {currentNode.mediaType === 'video' && currentNode.videoUrl && currentNode.videoUrl !== 'local-blob-session' ? (
                       <video 
+                        key={currentNode.videoUrl}
                         src={currentNode.videoUrl} 
                         className="w-full h-full object-cover"
                         autoPlay 
@@ -1423,9 +1472,9 @@ export default function App() {
                         muted 
                         playsInline
                       />
-                    ) : currentNode.imageUrl ? (
+                    ) : (currentNode.imageUrl || (currentNode.mediaType === 'video' && currentNode.videoUrl === 'local-blob-session')) ? (
                       <img 
-                        src={currentNode.imageUrl} 
+                        src={currentNode.imageUrl || 'https://images.unsplash.com/photo-1464802686167-b939a6910659?q=80&w=2070&auto=format&fit=crop'} 
                         className="w-full h-full object-cover"
                         alt="Scene Visual"
                         referrerPolicy="no-referrer"
@@ -1502,10 +1551,13 @@ export default function App() {
                       </h2>
                     </div>
 
-                    <div className={`prose max-w-none transition-all duration-700 hyphens-auto whitespace-pre-wrap ${bodyFont} ${fontSizeClass} ${lineSpacingClass} ${textAlignClass} ${fontWeightClass} ${
-                      genre === 'romance' ? 'text-rose-900/80' : genre === 'paranormal' ? 'text-purple-200/70' : 'text-gray-400'
+                    <div id="story-content" className={`prose max-w-none transition-all duration-700 hyphens-auto whitespace-pre-wrap ${bodyFont} ${fontSizeClass} ${lineSpacingClass} ${textAlignClass} ${fontWeightClass} ${
+                      genre === 'romance' ? 'text-rose-900/80' : genre === 'paranormal' ? 'text-purple-200/70' : genre === 'crime' ? 'text-zinc-400' : 'text-gray-400'
                     }`}>
-                      {currentNode.sceneDescription || ''}
+                      {typewriterText}
+                      {settings.typewriter && !typewriterComplete && (
+                        <span className="inline-block w-1 h-4 ml-1 bg-current animate-pulse align-middle" />
+                      )}
                     </div>
                   </div>
 
@@ -1526,38 +1578,44 @@ export default function App() {
                        
                        {!loading ? (
                         <div className="flex flex-col gap-4">
-                          {allSteps.length > 1 && (
-                            <motion.button
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              onClick={goBack}
-                              className={`group w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4 ${buttonSecondary}`}
-                            >
-                              <div className={`p-2 rounded-lg ${genre === 'romance' ? 'bg-rose-50 text-rose-500' : genre === 'paranormal' ? 'bg-purple-900/40 text-purple-400' : 'bg-white/5 text-sky-400'}`}>
-                                <ArrowLeft className="w-4 h-4" />
-                              </div>
-                              <span className="text-[10px] font-black uppercase tracking-widest">Step Back in Time</span>
-                            </motion.button>
-                          )}
-                          {currentNode.choices?.map((choice, idx) => (
-                            <motion.button
-                              key={idx}
-                              initial={{ opacity: 0, x: -20 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: idx * 0.1 }}
-                              onClick={() => handleChoice(choice)}
-                              className={`group relative p-6 text-left border rounded-3xl transition-all duration-500 transform active:scale-95 ${cardBase} hover:border-${accent}-500/50`}
-                            >
-                              <div className="flex items-start gap-4">
-                                <div className={`mt-1.5 w-1.5 h-1.5 rounded-full transition-all duration-500 group-hover:scale-150 ${
-                                  genre === 'romance' ? 'bg-rose-300 group-hover:bg-rose-500' : genre === 'paranormal' ? 'bg-purple-600 group-hover:bg-purple-400' : 'bg-sky-900 group-hover:bg-sky-400'
-                                }`} />
-                                <span className={`flex-1 font-bold leading-tight ${genre === 'romance' ? 'text-rose-950 text-base' : 'text-white text-sm font-sans'}`}>
-                                  {choice.text}
-                                </span>
-                              </div>
-                            </motion.button>
-                          ))}
+                          <AnimatePresence>
+                            {allSteps.length > 1 && (
+                              <motion.button
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                onClick={goBack}
+                                className={`group w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4 ${buttonSecondary} mb-2 overflow-hidden`}
+                              >
+                                <div className={`p-2 rounded-lg ${genre === 'romance' ? 'bg-rose-50 text-rose-500' : genre === 'paranormal' ? 'bg-purple-900/40 text-purple-400' : 'bg-white/5 text-sky-400'}`}>
+                                  <ArrowLeft className="w-4 h-4" />
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest">Step Back in Time</span>
+                              </motion.button>
+                            )}
+                          </AnimatePresence>
+                          
+                          <div className="space-y-4">
+                            {currentNode.choices?.map((choice, idx) => (
+                              <motion.button
+                                key={idx}
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0.5 + (idx * 0.1) }}
+                                onClick={() => handleChoice(choice)}
+                                className={`group relative p-6 text-left border rounded-3xl transition-all duration-500 transform active:scale-95 w-full ${cardBase} hover:border-${accent}-500/50`}
+                              >
+                                <div className="flex items-start gap-4">
+                                  <div className={`mt-1.5 w-1.5 h-1.5 rounded-full transition-all duration-500 group-hover:scale-150 ${
+                                    genre === 'romance' ? 'bg-rose-300 group-hover:bg-rose-500' : genre === 'paranormal' ? 'bg-purple-600 group-hover:bg-purple-400' : 'bg-sky-900 group-hover:bg-sky-400'
+                                  }`} />
+                                  <span className={`flex-1 font-bold leading-tight ${genre === 'romance' ? 'text-rose-950 text-base' : 'text-white text-sm font-sans'}`}>
+                                    {choice.text}
+                                  </span>
+                                </div>
+                              </motion.button>
+                            ))}
+                          </div>
 
                           <div className="pt-6 border-t border-white/5 mt-4 space-y-4">
                             <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Your Freeform Action</label>
@@ -1606,6 +1664,7 @@ export default function App() {
                 </div>
               </motion.div>
             )}
+          </AnimatePresence>
           </div>
         )}
       </AnimatePresence>
