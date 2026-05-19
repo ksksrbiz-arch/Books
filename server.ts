@@ -12,15 +12,25 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Initialize Gemini
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY!,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazy initialize Gemini
+let genAI: GoogleGenAI | null = null;
+function getAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY environment variable is required");
     }
+    genAI = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return genAI;
+}
 
 /**
  * Story Generation Node Structure
@@ -76,7 +86,7 @@ app.post("/api/story/start", async (req, res) => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model: "gemini-3-flash-preview",
       contents: "Start the first scene of the adventure.",
       config: {
@@ -123,7 +133,7 @@ app.post("/api/story/continue", async (req, res) => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
@@ -145,7 +155,7 @@ app.post("/api/story/image", async (req, res) => {
 
   try {
     // Using gemini-2.5-flash-image for speed
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [
@@ -179,7 +189,7 @@ import { GenerateVideosOperation } from '@google/genai';
 app.post("/api/story/video/start", async (req, res) => {
   const { prompt } = req.body;
   try {
-    const operation = await ai.models.generateVideos({
+    const operation = await getAI().models.generateVideos({
       model: 'veo-3.1-lite-generate-preview',
       prompt: `Cinematic, atmospheric, artistic movement: ${prompt}. Slow motion, high fidelity.`,
       config: {
@@ -200,7 +210,7 @@ app.post("/api/story/video/status", async (req, res) => {
   try {
     const op = new GenerateVideosOperation();
     op.name = operationName;
-    const updated = await ai.operations.getVideosOperation({ operation: op });
+    const updated = await getAI().operations.getVideosOperation({ operation: op });
     res.json({ done: updated.done });
   } catch (error: any) {
     console.error("Error checking video status:", error);
@@ -213,7 +223,7 @@ app.post("/api/story/video/download", async (req, res) => {
   try {
     const op = new GenerateVideosOperation();
     op.name = operationName;
-    const updated = await ai.operations.getVideosOperation({ operation: op });
+    const updated = await getAI().operations.getVideosOperation({ operation: op });
     const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
     if (!uri) return res.status(404).json({ error: "Video not found" });
 

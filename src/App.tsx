@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { 
   Book, 
   ChevronRight, 
@@ -27,6 +27,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
 import { audioManager, AudioMood } from './lib/audio';
+import { AtmosphericEffects } from './components/AtmosphericEffects';
 import { 
   signInWithPopup, 
   signOut, 
@@ -95,6 +96,9 @@ export default function App() {
 
   // Scroll to top on node change
   const contentRef = useRef<HTMLDivElement>(null);
+  const { scrollY } = useScroll();
+  const bgY = useTransform(scrollY, [0, 1000], [0, 200]);
+  const bgOpacity = useTransform(scrollY, [0, 500], [0.2, 0.4]);
 
   // Audio effect
   useEffect(() => {
@@ -271,7 +275,9 @@ export default function App() {
         updatedAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/stories`));
       
-      if (storyRef) {
+      const isDocRef = (ref: any): ref is { id: string } => ref && typeof ref === 'object' && 'id' in ref;
+
+      if (isDocRef(storyRef)) {
         setCurrentStoryId(storyRef.id);
         // Add initial step
         await addDoc(collection(db, 'users', user.uid, 'stories', storyRef.id, 'steps'), {
@@ -506,48 +512,21 @@ export default function App() {
 
   return (
     <div className={`min-h-screen transition-all duration-1000 ease-in-out ${themeClasses} overflow-x-hidden`}>
-      <div className="fixed inset-0 pointer-events-none z-0">
-        {(genre === 'romance' || genre === 'paranormal') && (
-          <>
-            {[...Array(20)].map((_, i) => (
-              <div 
-                key={i}
-                className={`absolute animate-float rounded-full blur-[2px] ${
-                  genre === 'romance' ? 'bg-rose-200/20' : 'bg-purple-400/20'
-                }`}
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  bottom: `-10vh`,
-                  width: `${Math.random() * (genre === 'paranormal' ? 15 : 10) + 5}px`,
-                  height: `${Math.random() * (genre === 'paranormal' ? 15 : 10) + 5}px`,
-                  animationDuration: `${Math.random() * 10 + 10}s`,
-                  animationDelay: `${Math.random() * 10}s`
-                }}
-              />
-            ))}
-          </>
-        )}
-        {genre === 'crime' && (
-          <>
-            <div className="absolute inset-0 noise-overlay opacity-[0.03] mix-blend-overlay" />
-            <div className="absolute inset-0 scanline opacity-[0.05]" />
-          </>
-        )}
-        {genre === 'paranormal' && (
-           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(88,28,135,0.05)_0%,transparent_70%)]" />
-        )}
-      </div>
+      <AtmosphericEffects genre={genre} mood={currentNode?.mood} />
 
-      {/* Dynamic Background Gradient */}
-      <div className={`fixed inset-0 pointer-events-none transition-opacity duration-1000 ${genre ? 'opacity-100' : 'opacity-0'}`}>
-        <div className={`absolute inset-0 max-w-7xl mx-auto blur-[120px] opacity-20 ${
+      {/* Dynamic Background Gradient with Parallax */}
+      <motion.div 
+        style={{ y: bgY, opacity: bgOpacity }}
+        className={`fixed inset-0 pointer-events-none transition-opacity duration-1000 ${genre ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <div className={`absolute inset-0 max-w-7xl mx-auto blur-[120px] ${
           genre === 'romance' 
             ? 'bg-[radial-gradient(circle_at_20%_30%,#fb7185_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#f43f5e_0%,transparent_50%)]' 
             : genre === 'crime'
             ? 'bg-[radial-gradient(circle_at_20%_30%,#1e293b_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#0f172a_0%,transparent_50%)]'
             : 'bg-[radial-gradient(circle_at_20%_30%,#581c87_0%,transparent_50%),radial-gradient(circle_at_80%_70%,#3b0764_0%,transparent_50%)]'
         }`} />
-      </div>
+      </motion.div>
 
       {/* HUD / Header */}
       <nav className={`fixed top-0 w-full z-50 p-6 border-b transition-all duration-700 ${
@@ -984,7 +963,7 @@ export default function App() {
                     <div className={`prose max-w-none leading-relaxed transition-all duration-700 hyphens-auto ${bodyFont} ${
                       genre === 'romance' ? 'text-rose-900/80' : genre === 'paranormal' ? 'text-purple-200/70' : 'text-gray-400'
                     }`}>
-                      <ReactMarkdown>{currentNode.sceneDescription}</ReactMarkdown>
+                      <ReactMarkdown>{currentNode.sceneDescription || ''}</ReactMarkdown>
                     </div>
                   </div>
 
@@ -1106,7 +1085,7 @@ export default function App() {
                         <div className="h-px flex-1 bg-current opacity-10" />
                       </div>
                       <div className="opacity-60 text-sm leading-relaxed italic">
-                        "...{item.sceneDescription.slice(0, 150)}..."
+                        "...{item.sceneDescription?.slice(0, 150)}..."
                       </div>
                       <div className={`p-4 rounded-xl font-bold border ${
                         genre === 'romance' ? 'bg-white border-rose-100' : genre === 'paranormal' ? 'bg-black/40 border-purple-500/10' : 'bg-zinc-900 border-white/5'
