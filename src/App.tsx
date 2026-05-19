@@ -65,15 +65,28 @@ interface StoryNode {
 }
 
 type Genre = 'romance' | 'crime' | 'paranormal' | null;
+type StoryLength = 'short' | 'medium' | 'epic';
+type PlotComplexity = 'simple' | 'complex' | 'layered';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [genre, setGenre] = useState<Genre>(null);
+  const [storyParameters, setStoryParameters] = useState<{
+    length: StoryLength;
+    archetype: string;
+    complexity: PlotComplexity;
+  }>({
+    length: 'medium',
+    archetype: '',
+    complexity: 'complex'
+  });
+  const [showParameterSetup, setShowParameterSetup] = useState(false);
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
   const [history, setHistory] = useState<{sceneDescription: string, choiceTaken: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
   const [videoStatus, setVideoStatus] = useState<{status: 'idle' | 'generating' | 'downloading' | 'failed', progress?: string}>({ status: 'idle' });
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -105,14 +118,25 @@ export default function App() {
       setUser(u);
       setAuthLoading(false);
       if (u) {
-        // Sync user profile
-        setDoc(doc(db, 'users', u.uid), {
-          uid: u.uid,
-          email: u.email,
-          displayName: u.displayName,
-          photoURL: u.photoURL,
-          createdAt: serverTimestamp()
-        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`));
+        // Sync user profile safely
+        const userRef = doc(db, 'users', u.uid);
+        getDoc(userRef).then((docSnap) => {
+          if (!docSnap.exists()) {
+            setDoc(userRef, {
+              uid: u.uid,
+              email: u.email,
+              displayName: u.displayName,
+              photoURL: u.photoURL,
+              createdAt: serverTimestamp()
+            }).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${u.uid}`));
+          } else {
+            // Standard update without touching createdAt
+            setDoc(userRef, {
+              displayName: u.displayName,
+              photoURL: u.photoURL,
+            }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${u.uid}`));
+          }
+        });
         
         // Try to resume active story
         resumeActiveStory(u.uid);
@@ -133,6 +157,11 @@ export default function App() {
         const storyData = storyDoc.data();
         setCurrentStoryId(storyDoc.id);
         setGenre(storyData.genre as Genre);
+        setStoryParameters({
+          length: (storyData.storyLength as StoryLength) || 'medium',
+          archetype: storyData.characterArchetype || '',
+          complexity: (storyData.plotComplexity as PlotComplexity) || 'complex'
+        });
         
         // Fetch steps
         const stepsRef = collection(db, 'users', uid, 'stories', storyDoc.id, 'steps');
@@ -195,19 +224,36 @@ export default function App() {
   };
 
   const startStory = async (selectedGenre: Genre) => {
-    if (!user) return;
     setGenre(selectedGenre);
+    setShowParameterSetup(true);
+  };
+
+  const confirmStartStory = async () => {
+    if (!user || !genre) return;
+    
+    // Validation
+    if (!storyParameters.archetype.trim()) {
+      setError("Please define your character's archetype (e.g. Broken Detective, Fated Witch).");
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setShowParameterSetup(false);
     try {
       let g = 'Romance';
-      if (selectedGenre === 'crime') g = 'True Crime Noir';
-      if (selectedGenre === 'paranormal') g = 'Paranormal Occult Indie';
+      if (genre === 'crime') g = 'True Crime Noir';
+      if (genre === 'paranormal') g = 'Paranormal Occult Indie';
       
       const response = await fetch('/api/story/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ genre: g }),
+        body: JSON.stringify({ 
+          genre: g,
+          storyLength: storyParameters.length,
+          characterArchetype: storyParameters.archetype,
+          plotComplexity: storyParameters.complexity
+        }),
       });
       if (!response.ok) throw new Error('Failed to start story');
       const data = await response.json();
@@ -216,7 +262,10 @@ export default function App() {
       // Create story in Firestore
       const storyRef = await addDoc(collection(db, 'users', user.uid, 'stories'), {
         userId: user.uid,
-        genre: selectedGenre,
+        genre: genre,
+        storyLength: storyParameters.length,
+        characterArchetype: storyParameters.archetype,
+        plotComplexity: storyParameters.complexity,
         status: 'active',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -266,7 +315,10 @@ export default function App() {
         body: JSON.stringify({ 
           history: newHistory, 
           choice, 
-          genre: g 
+          genre: g,
+          storyLength: storyParameters.length,
+          characterArchetype: storyParameters.archetype,
+          plotComplexity: storyParameters.complexity
         }),
       });
       if (!response.ok) throw new Error('Failed to continue story');
@@ -308,6 +360,7 @@ export default function App() {
 
   const generateVideo = async (prompt: string, storyId?: string | null) => {
     setVideoStatus({ status: 'generating' });
+    setGenerationProgress(5);
     try {
       const startRes = await fetch('/api/story/video/start', {
         method: 'POST',
@@ -316,11 +369,20 @@ export default function App() {
       });
       if (!startRes.ok) throw new Error('Video generation failed to start');
       const { operationName } = await startRes.json();
+      setGenerationProgress(15);
 
       // Poll for status
       let done = false;
+      let pollCount = 0;
       while (!done) {
         await new Promise(r => setTimeout(r, 5000));
+        pollCount++;
+        // Simulate progress increasing slowly during polling
+        setGenerationProgress(prev => {
+          if (prev < 85) return prev + Math.max(1, (90 - prev) / 10);
+          return prev;
+        });
+
         const statusRes = await fetch('/api/story/video/status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -330,6 +392,7 @@ export default function App() {
         done = statusData.done;
       }
 
+      setGenerationProgress(90);
       setVideoStatus({ status: 'downloading' });
       const downloadRes = await fetch('/api/story/video/download', {
         method: 'POST',
@@ -338,8 +401,10 @@ export default function App() {
       });
       if (!downloadRes.ok) throw new Error('Video download failed');
       
+      setGenerationProgress(95);
       const blob = await downloadRes.blob();
       const videoUrl = URL.createObjectURL(blob);
+      setGenerationProgress(100);
       setCurrentNode(prev => prev ? { ...prev, videoUrl, mediaType: 'video' } : null);
 
       if (user && storyId) {
@@ -360,11 +425,23 @@ export default function App() {
       setVideoStatus({ status: 'failed' });
     } finally {
       setVideoStatus({ status: 'idle' });
+      const currentProgress = generationProgress;
+      if (currentProgress < 100) setGenerationProgress(0);
+      else setTimeout(() => setGenerationProgress(0), 2000);
     }
   };
 
   const generateImage = async (prompt: string, mood: string, storyId?: string | null) => {
     setImageLoading(true);
+    setGenerationProgress(10);
+    // Fake progress interval for image
+    const progressInterval = setInterval(() => {
+      setGenerationProgress(prev => {
+        if (prev < 90) return prev + 5;
+        return prev;
+      });
+    }, 400);
+
     try {
       const response = await fetch('/api/story/image', {
         method: 'POST',
@@ -373,6 +450,7 @@ export default function App() {
       });
       if (!response.ok) throw new Error('Failed to generate image');
       const data = await response.json();
+      setGenerationProgress(100);
       setCurrentNode(prev => prev ? { ...prev, imageUrl: data.imageUrl } : null);
 
       // Update latest step with image URL if possible
@@ -389,7 +467,9 @@ export default function App() {
     } catch (err) {
       console.error("Image gen failed", err);
     } finally {
+      clearInterval(progressInterval);
       setImageLoading(false);
+      setTimeout(() => setGenerationProgress(0), 1000);
     }
   };
 
@@ -401,6 +481,12 @@ export default function App() {
       }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}/stories/${currentStoryId}`));
     }
     setGenre(null);
+    setStoryParameters({
+      length: 'medium',
+      archetype: '',
+      complexity: 'complex'
+    });
+    setShowParameterSetup(false);
     setCurrentNode(null);
     setHistory([]);
     setError(null);
@@ -656,6 +742,105 @@ export default function App() {
               </div>
             </motion.div>
           </AnimatePresence>
+        ) : showParameterSetup ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex-1 flex flex-col justify-center items-center max-w-2xl mx-auto w-full gap-8"
+          >
+            <div className="text-center space-y-4">
+              <h2 className={`text-4xl font-black uppercase tracking-tight ${genre === 'romance' ? 'text-rose-900 font-serif italic' : 'text-white'}`}>
+                Define Your Fate
+              </h2>
+              <p className="text-gray-500 font-medium">Configure the tapestry of your story before we weave it.</p>
+            </div>
+
+            <div className={`w-full p-8 rounded-[2rem] border space-y-8 ${
+              genre === 'romance' ? 'bg-white border-rose-100 shadow-xl' : 'bg-white/5 border-white/10 backdrop-blur-xl'
+            }`}>
+              <div className="space-y-4">
+                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Character Archetype</label>
+                <input 
+                  type="text"
+                  placeholder="e.g. A disgraced detective seeking redemption..."
+                  value={storyParameters.archetype}
+                  onChange={(e) => setStoryParameters(p => ({ ...p, archetype: e.target.value }))}
+                  className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 ${
+                    genre === 'romance' 
+                      ? 'border-rose-100 focus:border-rose-300 focus:ring-rose-100 text-rose-900 placeholder:text-rose-200' 
+                      : 'border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20'
+                  }`}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Story Depth (Length)</label>
+                  <div className="flex flex-col gap-2">
+                    {(['short', 'medium', 'epic'] as StoryLength[]).map(l => (
+                      <button
+                        key={l}
+                        onClick={() => setStoryParameters(p => ({ ...p, length: l }))}
+                        className={`p-3 text-left rounded-xl border text-xs font-bold uppercase tracking-widest transition-all ${
+                          storyParameters.length === l
+                            ? genre === 'romance' 
+                              ? 'bg-rose-500 border-rose-500 text-white' 
+                              : 'bg-sky-500 border-sky-500 text-white'
+                            : genre === 'romance'
+                              ? 'border-rose-100 text-rose-300 hover:bg-rose-50'
+                              : 'border-white/10 text-white/40 hover:bg-white/5'
+                        }`}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] uppercase font-black tracking-widest opacity-40">Plot Complexity</label>
+                  <div className="flex flex-col gap-2">
+                    {(['simple', 'complex', 'layered'] as PlotComplexity[]).map(c => (
+                      <button
+                        key={c}
+                        onClick={() => setStoryParameters(p => ({ ...p, complexity: c }))}
+                        className={`p-3 text-left rounded-xl border text-xs font-bold uppercase tracking-widest transition-all ${
+                          storyParameters.complexity === c
+                            ? genre === 'romance' 
+                              ? 'bg-rose-500 border-rose-500 text-white' 
+                              : 'bg-sky-500 border-sky-500 text-white'
+                            : genre === 'romance'
+                              ? 'border-rose-100 text-rose-300 hover:bg-rose-50'
+                              : 'border-white/10 text-white/40 hover:bg-white/5'
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {error && <p className="text-red-500 text-[10px] font-bold uppercase text-center">{error}</p>}
+
+              <button
+                onClick={confirmStartStory}
+                className={`w-full py-5 rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-3 ${
+                  genre === 'romance' ? 'bg-rose-500 text-white' : 'bg-white text-black'
+                }`}
+              >
+                <Zap className="w-5 h-5" />
+                Begin Narrative
+              </button>
+              
+              <button 
+                onClick={() => setGenre(null)}
+                className="w-full text-[10px] font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity"
+              >
+                Go Back
+              </button>
+            </div>
+          </motion.div>
         ) : (
           <div className="flex-1 flex flex-col relative" ref={contentRef}>
             {loading && !currentNode && (
@@ -725,22 +910,40 @@ export default function App() {
                         referrerPolicy="no-referrer"
                       />
                     ) : imageLoading || videoStatus.status !== 'idle' ? (
-                      <div className="flex flex-col items-center gap-6">
+                      <div className="flex flex-col items-center gap-8 w-full max-w-sm px-6">
                         <div className="relative">
-                           <Loader2 className={`w-16 h-16 animate-spin ${
+                           <Loader2 className={`w-20 h-20 animate-spin ${
                              genre === 'romance' ? 'text-rose-200' : genre === 'paranormal' ? 'text-purple-400' : 'text-sky-400'
                            }`} />
-                           <Sparkles className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 animate-pulse ${
+                           <Sparkles className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 animate-pulse ${
                              genre === 'romance' ? 'text-rose-400' : 'text-white'
                            }`} />
                         </div>
-                        <div className="text-center space-y-1">
-                          <span className="block text-[10px] uppercase font-black tracking-[0.4em] opacity-40">
-                            {videoStatus.status !== 'idle' ? `Generating Cinematic ${videoStatus.status}` : 'Synthesizing Visuals'}
-                          </span>
-                          <span className="block text-[8px] uppercase font-mono tracking-widest opacity-20 italic">
-                            {videoStatus.status !== 'idle' ? 'This may take a few minutes for high quality...' : 'Drawing from the Universe Sea...'}
-                          </span>
+                        
+                        <div className="w-full space-y-4">
+                          <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${generationProgress}%` }}
+                              className={`h-full ${
+                                genre === 'romance' ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]' : 'bg-sky-500 shadow-[0_0_10px_rgba(14,165,233,0.5)]'
+                              }`}
+                            />
+                          </div>
+                          
+                          <div className="text-center space-y-1">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[10px] uppercase font-black tracking-[0.2em] opacity-40">
+                                {videoStatus.status !== 'idle' ? `Cinematic ${videoStatus.status}` : 'Neural Rendering'}
+                              </span>
+                              <span className="text-[10px] font-mono font-bold opacity-60">
+                                {Math.round(generationProgress)}%
+                              </span>
+                            </div>
+                            <span className="block text-[8px] uppercase font-mono tracking-widest opacity-20 italic">
+                              {videoStatus.status !== 'idle' ? 'This takes longer to weave high-fidelity motion...' : 'Drawing from the deep Universe Sea...'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -802,7 +1005,7 @@ export default function App() {
                        
                        {!loading ? (
                         <div className="flex flex-col gap-4">
-                          {currentNode.choices.map((choice, idx) => (
+                          {currentNode.choices?.map((choice, idx) => (
                             <button
                               key={idx}
                               onClick={() => handleChoice(choice)}

@@ -50,11 +50,16 @@ const StoryNodeSchema = {
 
 // API routes
 app.post("/api/story/start", async (req, res) => {
-  const { genre } = req.body;
+  const { genre, storyLength, characterArchetype, plotComplexity } = req.body;
   
   const systemInstruction = `
     You are a master storyteller specializing in interactive fiction for an adult audience.
-    Your task is to start a compelling choose-your-own-adventure story in the genre: ${genre}.
+    Your task is to start a compelling choose-your-own-adventure story.
+    
+    GENRE: ${genre}
+    STORY LENGTH: ${storyLength || 'medium'} (Adjust pacing to fit this length)
+    PROTAGONIST ARCHETYPE: ${characterArchetype || 'unknown'}
+    PLOT COMPLEXITY: ${plotComplexity || 'complex'} (Adjust depth of mystery and subplots)
     
     If Romance: focus on emotional subtext, tension, longing, and atmospheric chemistry. Avoid clichés; focus on complex feelings.
     If True Crime/Noir: focus on grit, moral ambiguity, suspense, and the "unreliable narrator" vibe.
@@ -89,11 +94,14 @@ app.post("/api/story/start", async (req, res) => {
 });
 
 app.post("/api/story/continue", async (req, res) => {
-  const { history, choice, genre } = req.body;
+  const { history, choice, genre, storyLength, characterArchetype, plotComplexity } = req.body;
   
   const systemInstruction = `
     You are a master storyteller. Continue the interactive story based on the user's choice.
     Genre: ${genre}.
+    Length Pacing: ${storyLength || 'medium'}.
+    Archetype: ${characterArchetype || 'unknown'}.
+    Complexity: ${plotComplexity || 'complex'}.
     
     GUIDELINES:
     1. Maintain tone and pace. Escalate the tension or emotional stakes.

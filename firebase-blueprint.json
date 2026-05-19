@@ -20,6 +20,9 @@
       "properties": {
         "userId": { "type": "string", "description": "Owner of the story" },
         "genre": { "type": "string", "enum": ["romance", "crime", "paranormal"], "description": "Chosen genre" },
+        "storyLength": { "type": "string", "enum": ["short", "medium", "epic"], "description": "Target length of the story" },
+        "characterArchetype": { "type": "string", "description": "User chosen starting archetype" },
+        "plotComplexity": { "type": "string", "enum": ["simple", "complex", "layered"], "description": "How complex the plot should be" },
         "status": { "type": "string", "enum": ["active", "completed"], "description": "Current status of the story" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
