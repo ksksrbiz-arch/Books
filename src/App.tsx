@@ -82,6 +82,8 @@ import OnboardingTutorial from "./components/OnboardingTutorial";
 import { RelationshipMeter } from "./components/RelationshipMeter";
 import { BranchingTimeline } from "./components/BranchingTimeline";
 import { GoogleKeepWorkspace } from "./components/GoogleKeepWorkspace";
+import { CodexLoreGlossary } from "./components/CodexLoreGlossary";
+import { BookOpen } from "lucide-react";
 import {
   doc,
   setDoc,
@@ -281,6 +283,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showKeepNotes, setShowKeepNotes] = useState(false);
+  const [showCodex, setShowCodex] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
 
@@ -1159,13 +1162,13 @@ function App() {
     storyId?: string | null,
   ) => {
     if (type === "video") {
-      await generateVideo(prompt, storyId);
+      await generateVideo(prompt, mood, storyId);
     } else {
       await generateImage(prompt, mood, storyId);
     }
   };
 
-  const generateVideo = async (prompt: string, storyId?: string | null) => {
+  const generateVideo = async (prompt: string, mood: string, storyId?: string | null) => {
     setVideoStatus({ status: "generating" });
     setGenerationProgress(5);
     try {
@@ -1258,11 +1261,9 @@ function App() {
       console.error("Video gen failed", err);
       setVideoStatus({ status: "failed" });
 
-      // Fallback to image generation if video fails
+      // Fallback to image generation if video fails - using the direct mood parameter passed
       console.log("Falling back to image generation...");
-      if (currentNode) {
-        generateImage(prompt, currentNode.mood, storyId);
-      }
+      generateImage(prompt, mood, storyId);
     } finally {
       setVideoStatus({ status: "idle" });
       const currentProgress = generationProgress;
@@ -2014,6 +2015,20 @@ function App() {
         </div>
       )}
 
+      {/* Persistent Codex & Lore Glossary Modal */}
+      {showCodex && currentStoryId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 backdrop-blur-xl bg-black/70 animate-fadeIn hover:cursor-default">
+          <div className="w-full max-w-6xl h-[85vh] md:h-[90vh]">
+            <CodexLoreGlossary
+              currentStoryId={currentStoryId}
+              currentNode={currentNode}
+              onClose={() => setShowCodex(false)}
+              genre={genre}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Background Gradient */}
       <div
         style={{ opacity: bgOpacity }}
@@ -2116,6 +2131,29 @@ function App() {
                   <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                </button>
+              )}
+              {currentStoryId && (
+                <button
+                  onClick={() => setShowCodex(!showCodex)}
+                  className={`p-2 rounded-full transition-colors relative ${
+                    showCodex
+                      ? genre === "romance"
+                        ? "text-rose-400 bg-rose-500/20"
+                        : genre === "crime"
+                        ? "text-yellow-400 bg-yellow-500/20"
+                        : "text-purple-400 bg-purple-500/20"
+                      : genre === "romance"
+                      ? "text-rose-400 hover:bg-rose-50"
+                      : "text-gray-400 hover:bg-white/5"
+                  }`}
+                  title="Story Codex & Lore"
+                >
+                  <BookOpen className="w-4 h-4" />
+                  <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-70"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-current"></span>
                   </span>
                 </button>
               )}

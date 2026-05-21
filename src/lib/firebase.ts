@@ -1,11 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, orderBy, getDocs, onSnapshot, serverTimestamp, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, setDoc, getDoc, collection, addDoc, query, orderBy, getDocs, onSnapshot, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+
+const dbId = (firebaseConfig as any).firestoreDatabaseId;
+export const db = dbId
+  ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, dbId)
+  : initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+
 export const googleProvider = new GoogleAuthProvider();
 
 export enum OperationType {

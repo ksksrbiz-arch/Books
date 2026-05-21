@@ -64,6 +64,20 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
       },
       "required": ["title", "type", "createdAt"]
+    },
+    "CodexEntry": {
+      "title": "CodexEntry",
+      "description": "A dynamically discovered lore or world-building item in the story",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Name/Title of the entry, e.g. Inspector Vance, Crimson Medallion" },
+        "category": { "type": "string", "description": "Category of the entry (character, location, item, clue, lore)" },
+        "content": { "type": "string", "description": "Detailed description/lore about the discovery" },
+        "sourceScene": { "type": "string", "description": "Scene title where this was discovered" },
+        "discoveredAt": { "type": "string", "format": "date-time", "description": "Timestamp when player discovered/updated this entry" },
+        "status": { "type": "string", "description": "Discovery state of the lore element" }
+      },
+      "required": ["title", "category", "content", "discoveredAt"]
     }
   },
   "firestore": {
@@ -82,6 +96,10 @@
     "users/{userId}/stories/{storyId}/notes/{noteId}": {
       "schema": "Note",
       "description": "Collaborative Keep-style creative notes mapped to the branching narrative"
+    },
+    "users/{userId}/stories/{storyId}/codex/{codexId}": {
+      "schema": "CodexEntry",
+      "description": "Dynamically updated genre-specific codex elements and lore discovered by the player"
     }
   }
 }

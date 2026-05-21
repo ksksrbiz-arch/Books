@@ -64,6 +64,13 @@ service cloud.firestore {
         && (data.linkedSceneId == null || (data.linkedSceneId is string && data.linkedSceneId.size() <= 128));
     }
 
+    function isValidCodex(data) {
+      return data.keys().hasAll(['title', 'category', 'content', 'discoveredAt'])
+        && data.title is string && data.title.size() <= 256
+        && data.category is string && data.category.size() <= 128
+        && data.content is string && data.content.size() <= 10000;
+    }
+
     // --- Routes ---
 
     match /users/{userId} {
@@ -93,6 +100,12 @@ service cloud.firestore {
           allow list, get: if isOwner(userId);
           allow create: if isOwner(userId) && isValidId(noteId) && isValidNote(incoming()) && incoming().createdAt == request.time;
           allow update: if isOwner(userId) && isValidNote(incoming()) && incoming().createdAt == existing().createdAt && (incoming().updatedAt == request.time || !incoming().keys().hasAll(['updatedAt']));
+          allow delete: if isOwner(userId);
+        }
+
+        match /codex/{codexId} {
+          allow list, get: if isOwner(userId);
+          allow create, update: if isOwner(userId) && isValidId(codexId) && isValidCodex(incoming());
           allow delete: if isOwner(userId);
         }
       }
