@@ -54,6 +54,16 @@ service cloud.firestore {
         && data.timestamp == request.time;
     }
 
+    function isValidNote(data) {
+      return data.keys().hasAll(['title', 'type', 'createdAt'])
+        && data.title is string && data.title.size() <= 512
+        && data.type in ['text', 'checklist']
+        && (data.content == null || (data.content is string && data.content.size() <= 20000))
+        && (data.color == null || (data.color is string && data.color.size() <= 64))
+        && (data.pinned == null || data.pinned is bool)
+        && (data.linkedSceneId == null || (data.linkedSceneId is string && data.linkedSceneId.size() <= 128));
+    }
+
     // --- Routes ---
 
     match /users/{userId} {
@@ -77,6 +87,13 @@ service cloud.firestore {
         match /steps/{stepId} {
           allow list, get: if isOwner(userId);
           allow create: if isOwner(userId) && isValidId(stepId) && isValidStep(incoming());
+        }
+
+        match /notes/{noteId} {
+          allow list, get: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidId(noteId) && isValidNote(incoming()) && incoming().createdAt == request.time;
+          allow update: if isOwner(userId) && isValidNote(incoming()) && incoming().createdAt == existing().createdAt && (incoming().updatedAt == request.time || !incoming().keys().hasAll(['updatedAt']));
+          allow delete: if isOwner(userId);
         }
       }
     }

@@ -5,6 +5,7 @@ interface SoundtrackManagerProps {
   intensity: number | undefined;
   genre: string | null;
   volume: number;
+  volumeMusic?: number;
   isMuted: boolean;
 }
 
@@ -18,12 +19,14 @@ const TRACKS: Record<string, string> = {
   default: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
 };
 
-export function SoundtrackManager({ mood, intensity, genre, volume, isMuted }: SoundtrackManagerProps) {
+export function SoundtrackManager({ mood, intensity, genre, volume, volumeMusic, isMuted }: SoundtrackManagerProps) {
   const audioContext = useRef<AudioContext | null>(null);
   const currentSource = useRef<AudioBufferSourceNode | null>(null);
   const gainNode = useRef<GainNode | null>(null);
   const [currentTrackUrl, setCurrentTrackUrl] = useState<string | null>(null);
   const isLoading = useRef(false);
+
+  const effectiveVolume = volumeMusic !== undefined ? volumeMusic : volume;
 
   useEffect(() => {
     if (!audioContext.current) {
@@ -102,7 +105,7 @@ export function SoundtrackManager({ mood, intensity, genre, volume, isMuted }: S
       newGain.connect(audioContext.current.destination);
 
       source.start(now + fadeOutDuration);
-      newGain.gain.linearRampToValueAtTime(isMuted ? 0 : (volume / 100), now + fadeOutDuration + 1.5);
+      newGain.gain.linearRampToValueAtTime(isMuted ? 0 : (effectiveVolume / 100), now + fadeOutDuration + 1.5);
 
       currentSource.current = source;
       gainNode.current = newGain;
@@ -122,9 +125,9 @@ export function SoundtrackManager({ mood, intensity, genre, volume, isMuted }: S
   useEffect(() => {
     if (gainNode.current && audioContext.current) {
       const now = audioContext.current.currentTime;
-      gainNode.current.gain.linearRampToValueAtTime(isMuted ? 0 : (volume / 100), now + 0.5);
+      gainNode.current.gain.linearRampToValueAtTime(isMuted ? 0 : (effectiveVolume / 100), now + 0.5);
     }
-  }, [volume, isMuted]);
+  }, [effectiveVolume, isMuted]);
 
   return null;
 }

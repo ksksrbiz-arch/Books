@@ -43,6 +43,27 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "When this step occurred" }
       },
       "required": ["sceneTitle", "sceneDescription", "timestamp"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "A Google Keep style creative story note",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Title of the note" },
+        "content": { "type": "string", "description": "Text content of the note" },
+        "type": { "type": "string", "description": "Type of note text or checklist" },
+        "listItems": {
+          "type": "array",
+          "description": "Items in checklist"
+        },
+        "color": { "type": "string", "description": "Background color label" },
+        "pinned": { "type": "boolean", "description": "Pinned status" },
+        "labels": { "type": "array", "description": "Category tags like character development, plot mapping" },
+        "linkedSceneId": { "type": "string", "description": "Linked story step or scene identifier" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["title", "type", "createdAt"]
     }
   },
   "firestore": {
@@ -57,6 +78,10 @@
     "users/{userId}/stories/{storyId}/steps/{stepId}": {
       "schema": "Step",
       "description": "History of steps in a specific story"
+    },
+    "users/{userId}/stories/{storyId}/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Collaborative Keep-style creative notes mapped to the branching narrative"
     }
   }
 }

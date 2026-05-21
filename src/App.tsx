@@ -26,9 +26,13 @@ import {
   X,
   Settings,
   ArrowLeft,
+  Lightbulb,
   Library as LibraryIcon,
   Type,
   Users,
+  Sliders,
+  Music,
+  Wind,
 } from "lucide-react";
 import {
   auth,
@@ -59,14 +63,32 @@ const EffectsOverlay = lazy(() =>
     default: m.EffectsOverlay,
   })),
 );
+const EnhancedImageContainer = lazy(() =>
+  import("./components/EnhancedImageContainer").then((m) => ({
+    default: m.EnhancedImageContainer,
+  })),
+);
+const IntroductionParticles = lazy(() =>
+  import("./components/IntroductionParticles").then((m) => ({
+    default: m.IntroductionParticles,
+  })),
+);
+const ImageFallbackContainer = lazy(() =>
+  import("./components/ImageFallbackContainer").then((m) => ({
+    default: m.ImageFallbackContainer,
+  })),
+);
 import OnboardingTutorial from "./components/OnboardingTutorial";
 import { RelationshipMeter } from "./components/RelationshipMeter";
+import { BranchingTimeline } from "./components/BranchingTimeline";
+import { GoogleKeepWorkspace } from "./components/GoogleKeepWorkspace";
 import {
   doc,
   setDoc,
   getDoc,
   collection,
   addDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -93,6 +115,7 @@ interface StoryNode {
   videoUrl?: string;
   isEnding?: boolean;
   endingType?: string;
+  imageGenFailed?: boolean;
 }
 
 type Genre = "romance" | "crime" | "paranormal" | null;
@@ -257,6 +280,7 @@ function App() {
   const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showKeepNotes, setShowKeepNotes] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
 
@@ -269,20 +293,29 @@ function App() {
     }
   }, []);
   const [hoveredStoryId, setHoveredStoryId] = useState<string | null>(null);
+  const [hoveredGenre, setHoveredGenre] = useState<"romance" | "crime" | "paranormal" | null>(null);
   const [allSteps, setAllSteps] = useState<any[]>([]);
   const [relationships, setRelationships] = useState<
     Record<string, { affinity: number; suspicion: number }>
   >({});
   const [npcUpdateNotifs, setNpcUpdateNotifs] = useState<any[]>([]);
   const [storyMilestones, setStoryMilestones] = useState<string[]>([]);
+  const [consequences, setConsequences] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState({
-    fontSize: "md", // sm, md, lg
+    fontSize: "md", // sm, md, lg, xl
     lineSpacing: "relaxed", // tight, normal, relaxed
     textAlign: "left", // left, center, justify
     fontWeight: "normal", // light, normal, bold
+    fontFamily: "default", // default, sans, serif, mono
+    letterSpacing: "normal", // normal, wide, widest
     typewriter: true,
     showImages: true,
+    textGlow: false,
+    reducedMotion: false,
     volume: 50,
+    volumeMusic: 50,
+    volumeSFX: 70,
+    volumeAmbient: 60,
     isMuted: false,
   });
 
@@ -499,6 +532,64 @@ function App() {
       );
       if (storyDoc.exists()) {
         const storyData = storyDoc.data();
+
+        // Check for alternate-reality restoration trigger from the Tapestry panel
+        const restoreTriggerStr = localStorage.getItem(`echoes_restore_trigger_${storyId}`);
+        if (restoreTriggerStr) {
+          try {
+            const restoredReality = JSON.parse(restoreTriggerStr);
+            localStorage.removeItem(`echoes_restore_trigger_${storyId}`);
+            console.log("Restoring alternate timeline reality stream:", restoredReality.name);
+
+            // 1. Synchronize story markers to root Story doc
+            await setDoc(
+              doc(db, "users", user.uid, "stories", storyId),
+              {
+                consequences: restoredReality.consequences || {},
+                storyMilestones: restoredReality.storyMilestones || [],
+                relationships: restoredReality.relationships || {},
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
+
+            // 2. Purge existing path steps
+            const stepsRef = collection(db, "users", user.uid, "stories", storyId, "steps");
+            const stepsSnap = await getDocs(stepsRef);
+            for (const docSnap of stepsSnap.docs) {
+              await deleteDoc(docSnap.ref);
+            }
+
+            // 3. Append the alternate timeline nodes
+            for (let i = 0; i < restoredReality.steps.length; i++) {
+              const step = restoredReality.steps[i];
+              await addDoc(stepsRef, {
+                sceneTitle: step.sceneTitle,
+                sceneDescription: step.sceneDescription,
+                imageUrl: step.imageUrl || null,
+                videoUrl: step.videoUrl || null,
+                choiceTaken: step.choiceTaken || null,
+                choices: step.choices || [],
+                imagePrompt: step.imagePrompt || "",
+                mediaType: step.mediaType || "image",
+                mood: step.mood || "mystery",
+                intensity: step.intensity || 3,
+                milestonesAchieved: step.milestonesAchieved || [],
+                newConsequences: step.newConsequences || {},
+                timestamp: serverTimestamp()
+              });
+              await new Promise((resolve) => setTimeout(resolve, 30));
+            }
+
+            // Set variables for instant UI alignment
+            storyData.consequences = restoredReality.consequences || {};
+            storyData.storyMilestones = restoredReality.storyMilestones || [];
+            storyData.relationships = restoredReality.relationships || {};
+          } catch (restoreErr) {
+            console.error("Alternate timeline restore failure", restoreErr);
+          }
+        }
+
         setCurrentStoryId(storyId);
         setGenre(storyData.genre as Genre);
         setStoryParameters({
@@ -510,6 +601,9 @@ function App() {
           isAdultContent: storyData.isAdultContent || false,
           customBasis: storyData.customBasis || "",
         });
+        setConsequences(storyData.consequences || {});
+        setStoryMilestones(storyData.storyMilestones || []);
+        setRelationships(storyData.relationships || {});
 
         const stepsRef = collection(
           db,
@@ -619,11 +713,75 @@ function App() {
     }
   };
 
+  const branchToStep = async (stepIndex: number) => {
+    if (!user || !currentStoryId || allSteps.length <= stepIndex) return;
+
+    setLoading(true);
+    try {
+      const newSteps = allSteps.slice(0, stepIndex + 1);
+      
+      // Update local memory state
+      setAllSteps(newSteps);
+      setHistory(
+        newSteps
+          .filter((s) => s.choiceTaken)
+          .map((s) => ({
+            sceneDescription: s.sceneDescription,
+            choiceTaken: s.choiceTaken,
+          })),
+      );
+
+      const targetStep = newSteps[newSteps.length - 1];
+      setCurrentNode({
+        sceneTitle: targetStep.sceneTitle,
+        sceneDescription: targetStep.sceneDescription,
+        choices: targetStep.choices || [],
+        imagePrompt: targetStep.imagePrompt || "",
+        mediaType: (targetStep.mediaType as any) || "image",
+        mood: targetStep.mood,
+        intensity: targetStep.intensity || 3,
+        imageUrl: targetStep.imageUrl,
+        videoUrl: targetStep.videoUrl,
+      });
+
+      // Prune subsequent steps in Firestore to maintain clean timeline states
+      const stepsRef = collection(
+        db,
+        "users",
+        user.uid,
+        "stories",
+        currentStoryId,
+        "steps",
+      );
+      const stepsSnapshot = await getDocs(stepsRef);
+      const stepsWithDocs = stepsSnapshot.docs.map((d) => ({
+        docId: d.id,
+        ref: d.ref,
+        timestamp: d.data().timestamp?.seconds || 0,
+      }));
+
+      // Sort chronological
+      stepsWithDocs.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Prune elements starting from stepIndex + 1
+      for (let i = stepIndex + 1; i < stepsWithDocs.length; i++) {
+        await deleteDoc(stepsWithDocs[i].ref);
+      }
+      
+      console.log(`Pruned ${stepsWithDocs.length - (stepIndex + 1)} steps from Firestore.`);
+    } catch (err) {
+      console.error("Timeline fork backtracking failed", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const login = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      setError("Login failed. Please try again.");
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      setError(`Login failed: ${err.message}`);
     }
   };
 
@@ -688,7 +846,6 @@ function App() {
 
     setLoading(true);
     setError(null);
-    setShowParameterSetup(false);
     try {
       let g = "Romance";
       if (genre === "crime") g = "True Crime Noir";
@@ -715,6 +872,7 @@ function App() {
       setRelationships({});
       setNpcUpdateNotifs([]);
       setStoryMilestones(data.milestonesAchieved || []);
+      setConsequences(data.newConsequences || {});
 
       if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
         setRelationships((prev) => {
@@ -751,6 +909,7 @@ function App() {
         );
       }
 
+      setShowParameterSetup(false);
       setCurrentNode(data);
 
       // Create story in Firestore
@@ -769,6 +928,8 @@ function App() {
           status: "active",
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+          storyMilestones: data.milestonesAchieved || [],
+          consequences: data.newConsequences || {},
         },
       ).catch((err) =>
         handleFirestoreError(
@@ -866,6 +1027,7 @@ function App() {
           customBasis: storyParameters.customBasis,
           relationships,
           storyMilestones,
+          consequences,
           isFinalChoice,
         }),
       });
@@ -873,32 +1035,31 @@ function App() {
       const data = await response.json();
 
       // Handle NPC Relationships
+      let updatedRelationships = { ...relationships };
       if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
-        setRelationships((prev) => {
-          const next = { ...prev };
-          data.npcUpdates.forEach((update: any) => {
-            if (!next[update.name])
-              next[update.name] = { affinity: 0, suspicion: 0 };
-            if (update.relationshipType === "suspicion") {
-              next[update.name].suspicion = Math.max(
-                -100,
-                Math.min(
-                  100,
-                  next[update.name].suspicion + update.affinityChange,
-                ),
-              );
-            } else {
-              next[update.name].affinity = Math.max(
-                -100,
-                Math.min(
-                  100,
-                  next[update.name].affinity + update.affinityChange,
-                ),
-              );
-            }
-          });
-          return next;
+        data.npcUpdates.forEach((update: any) => {
+          if (!updatedRelationships[update.name]) {
+            updatedRelationships[update.name] = { affinity: 0, suspicion: 0 };
+          }
+          if (update.relationshipType === "suspicion") {
+            updatedRelationships[update.name].suspicion = Math.max(
+              -100,
+              Math.min(
+                100,
+                updatedRelationships[update.name].suspicion + update.affinityChange,
+              ),
+            );
+          } else {
+            updatedRelationships[update.name].affinity = Math.max(
+              -100,
+              Math.min(
+                100,
+                updatedRelationships[update.name].affinity + update.affinityChange,
+              ),
+            );
+          }
         });
+        setRelationships(updatedRelationships);
 
         // Add to notifications queue
         setNpcUpdateNotifs((prev) => [
@@ -910,8 +1071,14 @@ function App() {
         ]);
       }
 
+      const updatedMilestones = [...storyMilestones, ...(data.milestonesAchieved || [])];
       if (data.milestonesAchieved && Array.isArray(data.milestonesAchieved)) {
-        setStoryMilestones((prev) => [...prev, ...data.milestonesAchieved]);
+        setStoryMilestones(updatedMilestones);
+      }
+      
+      const updatedConsequences = { ...consequences, ...(data.newConsequences || {}) };
+      if (data.newConsequences) {
+        setConsequences(updatedConsequences);
       }
 
       const newData = { ...data, id: "" }; // Will get ID later or just use index for back
@@ -922,6 +1089,9 @@ function App() {
         doc(db, "users", user.uid, "stories", currentStoryId),
         {
           updatedAt: serverTimestamp(),
+          consequences: updatedConsequences,
+          storyMilestones: updatedMilestones,
+          relationships: updatedRelationships,
         },
         { merge: true },
       ).catch((err) =>
@@ -1108,6 +1278,9 @@ function App() {
   ) => {
     setImageLoading(true);
     setGenerationProgress(10);
+    setCurrentNode((prev) =>
+      prev ? { ...prev, imageGenFailed: false } : null,
+    );
     // Fake progress interval for image
     const progressInterval = setInterval(() => {
       setGenerationProgress((prev) => {
@@ -1120,13 +1293,13 @@ function App() {
       const response = await fetch("/api/story/image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, mood }),
+        body: JSON.stringify({ prompt, mood, genre }),
       });
       if (!response.ok) throw new Error("Failed to generate image");
       const data = await response.json();
       setGenerationProgress(100);
       setCurrentNode((prev) =>
-        prev ? { ...prev, imageUrl: data.imageUrl } : null,
+        prev ? { ...prev, imageUrl: data.imageUrl, imageGenFailed: false } : null,
       );
 
       // Update latest step with image URL if possible
@@ -1165,8 +1338,12 @@ function App() {
           );
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Image gen failed", err);
+      setError(`Image generation failed: ${err.message}`);
+      setCurrentNode((prev) =>
+        prev ? { ...prev, imageGenFailed: true } : null,
+      );
     } finally {
       clearInterval(progressInterval);
       setImageLoading(false);
@@ -1207,6 +1384,7 @@ function App() {
     setHistory([]);
     setError(null);
     setCurrentStoryId(null);
+    setConsequences({});
   };
 
   const themeClasses =
@@ -1225,11 +1403,13 @@ function App() {
         ? "font-serif italic tracking-wide text-purple-100"
         : "font-display uppercase tracking-tight text-white";
   const bodyFont =
-    genre === "romance"
-      ? "font-sans"
-      : genre === "paranormal"
-        ? "font-sans opacity-90"
-        : "font-mono";
+    settings.fontFamily && settings.fontFamily !== "default"
+      ? (settings.fontFamily === "sans" ? "font-sans" : settings.fontFamily === "serif" ? "font-serif text-[110%] leading-relaxed" : "font-mono text-[92%]")
+      : (genre === "romance"
+        ? "font-sans"
+        : genre === "paranormal"
+          ? "font-sans opacity-90"
+          : "font-mono");
 
   const getGenreAccent = () => {
     switch (genre) {
@@ -1272,7 +1452,9 @@ function App() {
       ? "text-sm"
       : settings.fontSize === "lg"
         ? "text-xl"
-        : "text-lg";
+        : settings.fontSize === "xl"
+          ? "text-2xl"
+          : "text-lg";
   const lineSpacingClass =
     settings.lineSpacing === "tight"
       ? "leading-tight"
@@ -1291,18 +1473,25 @@ function App() {
       : settings.fontWeight === "bold"
         ? "font-bold"
         : "font-normal";
+  const letterSpacingClass =
+    settings.letterSpacing === "widest"
+      ? "tracking-widest"
+      : settings.letterSpacing === "wide"
+        ? "tracking-wide"
+        : "tracking-normal";
 
   return (
     <div
-      className={`min-h-screen transition-all duration-1000 ease-in-out ${themeClasses} overflow-x-hidden`}
+      className={`min-h-screen transition-all duration-1000 ease-in-out ${themeClasses} overflow-x-hidden ${settings.reducedMotion ? "motion-reduce" : ""}`}
     >
       <Suspense fallback={null}>
-        <AtmosphericEffects genre={genre} />
+        <AtmosphericEffects genre={genre} mood={currentNode?.mood} reducedMotion={settings.reducedMotion} />
         <SoundtrackManager
           mood={currentNode?.mood}
           intensity={currentNode?.intensity}
           genre={genre}
           volume={settings.volume}
+          volumeMusic={settings.volumeMusic}
           isMuted={settings.isMuted}
         />
       </Suspense>
@@ -1321,195 +1510,360 @@ function App() {
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/40">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-xl bg-black/50 overflow-y-auto">
           <div
-            className={`w-full max-w-md p-8 rounded-[2.5rem] border shadow-2xl ${
+            className={`w-full max-w-lg p-6 md:p-8 rounded-[2.5rem] border shadow-2xl transition-all duration-300 ${
               genre === "romance"
-                ? "bg-white border-rose-100"
-                : "bg-zinc-900 border-white/10"
-            }`}
+                ? "bg-[#FCF8F8] border-rose-200 text-rose-950"
+                : genre === "paranormal"
+                  ? "bg-[#0E0A16] border-purple-500/20 text-purple-200"
+                  : "bg-zinc-900 border-white/10 text-white"
+            } max-h-[90vh] flex flex-col`}
           >
-            <div className="flex justify-between items-center mb-8">
-              <h3
-                className={`text-2xl font-black uppercase tracking-tight ${genre === "romance" ? "text-rose-900" : "text-white"}`}
-              >
-                Settings
-              </h3>
+            <div className="flex justify-between items-center mb-6 shrink-0 border-b border-rose-100 pb-4 dark:border-white/5">
+              <div className="space-y-1 text-left">
+                <h3
+                  className={`text-2xl font-black uppercase tracking-tight flex items-center gap-2 ${genre === "romance" ? "text-rose-900 font-serif" : "text-white"}`}
+                >
+                  <Sliders className="w-5 h-5 opacity-75 text-sky-400" /> Set Choice Reality Parameters
+                </h3>
+                <p className="text-[9px] uppercase tracking-widest opacity-40 font-mono">Customize your immersive story canvas</p>
+              </div>
               <button
                 onClick={() => setShowSettings(false)}
-                className="p-2 hover:bg-white/5 rounded-full transition-colors"
+                className="p-2 hover:bg-black/10 dark:hover:bg-white/5 rounded-full transition-colors shrink-0"
+                aria-label="Close settings"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-8 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
-                  Reading Size
-                </label>
-                <div className="flex gap-2">
-                  {(["sm", "md", "lg"] as const).map((size) => (
-                    <button
-                      key={size}
-                      onClick={() =>
-                        setSettings((s) => ({ ...s, fontSize: size }))
-                      }
-                      className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-                        settings.fontSize === size
-                          ? `bg-${accent}-500 border-${accent}-500 text-white`
-                          : genre === "romance"
-                            ? "border-rose-100 text-rose-300 hover:bg-rose-50"
-                            : "border-white/10 text-white/40 hover:bg-white/5"
-                      }`}
-                    >
-                      {size === "sm"
-                        ? "Small"
-                        : size === "md"
-                          ? "Medium"
-                          : "Large"}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1 pb-4">
+              
+              {/* SECTION: AUDIO LEVEL MANAGEMENT */}
+              <div className="space-y-4 p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                <h4 className="text-[10px] font-mono uppercase tracking-wider font-extrabold pb-2 border-b border-black/5 dark:border-white/5 flex items-center justify-between text-left">
+                  <span>🔊 Immersive Audio Core</span>
+                  {settings.isMuted && <span className="text-red-500 text-[8.5px] uppercase tracking-widest animate-pulse">[ MUTED ]</span>}
+                </h4>
 
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
-                  Line Spacing
-                </label>
-                <div className="flex gap-2">
-                  {(["tight", "normal", "relaxed"] as const).map((spacing) => (
-                    <button
-                      key={spacing}
-                      onClick={() =>
-                        setSettings((s) => ({ ...s, lineSpacing: spacing }))
-                      }
-                      className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-                        settings.lineSpacing === spacing
-                          ? `bg-${accent}-500 border-${accent}-500 text-white`
-                          : genre === "romance"
-                            ? "border-rose-100 text-rose-300 hover:bg-rose-50"
-                            : "border-white/10 text-white/40 hover:bg-white/5"
-                      }`}
-                    >
-                      {spacing}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
-                  Alignment
-                </label>
-                <div className="flex gap-2">
-                  {(["left", "center", "justify"] as const).map((align) => (
-                    <button
-                      key={align}
-                      onClick={() =>
-                        setSettings((s) => ({ ...s, textAlign: align }))
-                      }
-                      className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-                        settings.textAlign === align
-                          ? `bg-${accent}-500 border-${accent}-500 text-white`
-                          : genre === "romance"
-                            ? "border-rose-100 text-rose-300 hover:bg-rose-50"
-                            : "border-white/10 text-white/40 hover:bg-white/5"
-                      }`}
-                    >
-                      {align}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
-                  Font Weight
-                </label>
-                <div className="flex gap-2">
-                  {(["light", "normal", "bold"] as const).map((weight) => (
-                    <button
-                      key={weight}
-                      onClick={() =>
-                        setSettings((s) => ({ ...s, fontWeight: weight }))
-                      }
-                      className={`flex-1 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-                        settings.fontWeight === weight
-                          ? `bg-${accent}-500 border-${accent}-500 text-white`
-                          : genre === "romance"
-                            ? "border-rose-100 text-rose-300 hover:bg-rose-50"
-                            : "border-white/10 text-white/40 hover:bg-white/5"
-                      }`}
-                    >
-                      {weight}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
-                  Immersion (Music)
-                </label>
-                <div className="flex items-center gap-4">
+                {/* Master Mute Trigger */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider">Silence Realm Soundtrack</p>
+                    <p className="text-[9px] opacity-40">Mute all background and atmospheric sound elements</p>
+                  </div>
                   <button
                     onClick={toggleMute}
-                    className={`p-3 rounded-xl border transition-all ${
-                      settings.isMuted
-                        ? "bg-rose-500/10 border-rose-500/20 text-rose-400"
-                        : "bg-white/5 border-white/5 text-white/40"
+                    className={`w-12 h-6 rounded-full relative transition-colors ${
+                      settings.isMuted 
+                        ? "bg-rose-600" 
+                        : genre === "romance" ? "bg-rose-200" : "bg-sky-500"
                     }`}
                   >
-                    {settings.isMuted ? (
-                      <VolumeX className="w-4 h-4" />
-                    ) : (
-                      <Volume2 className="w-4 h-4" />
-                    )}
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.isMuted ? "left-7" : "left-1"}`}
+                    />
                   </button>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={settings.volume}
-                    onChange={(e) =>
-                      setSettings((s) => ({
-                        ...s,
-                        volume: parseInt(e.target.value),
-                      }))
-                    }
-                    className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer ${
-                      genre === "romance"
-                        ? "bg-rose-100 accent-rose-500"
-                        : "bg-white/10 accent-sky-500"
-                    }`}
-                  />
-                  <span className="text-[10px] font-mono opacity-40 w-8">
-                    {settings.volume}%
-                  </span>
+                </div>
+                
+                {/* Granular Audio Sliders */}
+                <div className="space-y-3 pt-2">
+                  {/* Slider 1: Soundtrack Music */}
+                  <div className="space-y-1 text-left">
+                    <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider opacity-60">
+                      <span>🎵 Soundtrack & Themes</span>
+                      <span>{settings.isMuted ? "0%" : `${settings.volumeMusic}%`}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Music className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={settings.volumeMusic}
+                        disabled={settings.isMuted}
+                        onChange={(e) =>
+                          setSettings((s) => ({
+                            ...s,
+                            volumeMusic: parseInt(e.target.value),
+                            volume: parseInt(e.target.value) // Sync legacy volume variable
+                          }))
+                        }
+                        className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer disabled:opacity-30 ${
+                          genre === "romance" ? "bg-rose-100 accent-rose-500" : "bg-white/10 accent-sky-500"
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Slider 2: Sound Effects */}
+                  <div className="space-y-1 text-left">
+                    <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider opacity-60">
+                      <span>⚡ Turning Point SFX</span>
+                      <span>{settings.isMuted ? "0%" : `${settings.volumeSFX}%`}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Zap className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={settings.volumeSFX}
+                        disabled={settings.isMuted}
+                        onChange={(e) =>
+                          setSettings((s) => ({
+                            ...s,
+                            volumeSFX: parseInt(e.target.value),
+                          }))
+                        }
+                        className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer disabled:opacity-30 ${
+                          genre === "romance" ? "bg-rose-100 accent-rose-500" : "bg-white/10 accent-sky-500"
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Slider 3: Ambient Atmosphere */}
+                  <div className="space-y-1 text-left">
+                    <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider opacity-60">
+                      <span>🌫️ Ambient Whispers</span>
+                      <span>{settings.isMuted ? "0%" : `${settings.volumeAmbient}%`}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Wind className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={settings.volumeAmbient}
+                        disabled={settings.isMuted}
+                        onChange={(e) =>
+                          setSettings((s) => ({
+                            ...s,
+                            volumeAmbient: parseInt(e.target.value),
+                          }))
+                        }
+                        className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer disabled:opacity-30 ${
+                          genre === "romance" ? "bg-rose-100 accent-rose-500" : "bg-white/10 accent-sky-500"
+                        }`}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
-                <div className="space-y-1">
-                  <p className="text-xs font-bold uppercase tracking-widest">
-                    Visual Feedback
-                  </p>
-                  <p className="text-[10px] opacity-40">
-                    Animated text and effects
-                  </p>
+              {/* SECTION: ADVANCED TYPOGRAPHY PROFILES */}
+              <div className="space-y-5 p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                <h4 className="text-[10px] font-mono uppercase tracking-wider font-extrabold pb-2 border-b border-black/5 dark:border-white/5 flex items-center gap-1.5 text-left">
+                  <Type className="w-3.5 h-3.5 opacity-70" /> Granular Typography Canvas
+                </h4>
+
+                {/* Font Family selector */}
+                <div className="space-y-2 text-left">
+                  <span className="text-[9px] uppercase font-bold tracking-widest opacity-50">Visual Font Deck</span>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {[
+                      { key: "default", label: "Theme Default" },
+                      { key: "sans", label: "Inter Sans" },
+                      { key: "serif", label: "Novels Serif" },
+                      { key: "mono", label: "Retro Mono" },
+                    ].map((fontSpec) => (
+                      <button
+                        key={fontSpec.key}
+                        onClick={() => setSettings((s) => ({ ...s, fontFamily: fontSpec.key }))}
+                        className={`py-2 rounded-lg border text-[9px] font-bold uppercase tracking-wider transition-all truncate px-1 ${
+                          settings.fontFamily === fontSpec.key
+                            ? `bg-${accent}-500 border-${accent}-500 text-white`
+                            : genre === "romance"
+                              ? "border-rose-100 text-rose-800 hover:bg-rose-50"
+                              : "border-white/10 text-white/50 hover:bg-white/5"
+                        }`}
+                      >
+                        {fontSpec.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <button
-                  onClick={() =>
-                    setSettings((s) => ({ ...s, typewriter: !s.typewriter }))
-                  }
-                  className={`w-12 h-6 rounded-full relative transition-colors ${settings.typewriter ? "bg-sky-500" : "bg-white/10"}`}
-                >
-                  <div
-                    className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.typewriter ? "left-7" : "left-1"}`}
-                  />
-                </button>
+
+                {/* Font Size deck */}
+                <div className="space-y-2 text-left">
+                  <span className="text-[9px] uppercase font-bold tracking-widest opacity-50">Reading Text Scale</span>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { key: "sm", label: "Small" },
+                      { key: "md", label: "Medium" },
+                      { key: "lg", label: "Large" },
+                      { key: "xl", label: "Extra Large" },
+                    ].map((sizeSpec) => (
+                      <button
+                        key={sizeSpec.key}
+                        onClick={() => setSettings((s) => ({ ...s, fontSize: sizeSpec.key as any }))}
+                        className={`py-2 rounded-lg border text-[9px] font-bold uppercase tracking-wider transition-all truncate px-1 ${
+                          settings.fontSize === sizeSpec.key
+                            ? `bg-${accent}-500 border-${accent}-500 text-white`
+                            : genre === "romance"
+                              ? "border-rose-100 text-rose-800 hover:bg-rose-50"
+                              : "border-white/10 text-white/50 hover:bg-white/5"
+                        }`}
+                      >
+                        {sizeSpec.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Letter Spacing deck */}
+                <div className="space-y-2 text-left">
+                  <span className="text-[9px] uppercase font-bold tracking-widest opacity-50">Kerning (Double Spacing)</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { key: "normal", label: "Normal" },
+                      { key: "wide", label: "Spacious" },
+                      { key: "widest", label: "Widespread" },
+                    ].map((letterSpec) => (
+                      <button
+                        key={letterSpec.key}
+                        onClick={() => setSettings((s) => ({ ...s, letterSpacing: letterSpec.key }))}
+                        className={`py-2 rounded-lg border text-[9px] font-bold uppercase tracking-wider transition-all truncate px-1 ${
+                          settings.letterSpacing === letterSpec.key
+                            ? `bg-${accent}-500 border-${accent}-500 text-white`
+                            : genre === "romance"
+                              ? "border-rose-100 text-rose-800 hover:bg-rose-50"
+                              : "border-white/10 text-white/50 hover:bg-white/5"
+                        }`}
+                      >
+                        {letterSpec.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Multi Layout options row combo */}
+                <div className="grid grid-cols-2 gap-4 pt-1 text-left">
+                  {/* Line Spacing selector */}
+                  <div className="space-y-2">
+                    <span className="text-[9px] uppercase font-bold tracking-widest opacity-50">Line Spacing Height</span>
+                    <select
+                      value={settings.lineSpacing}
+                      onChange={(e) => setSettings((s) => ({ ...s, lineSpacing: e.target.value as any }))}
+                      className={`w-full py-2 px-3 rounded-xl border text-[11px] font-serif bg-transparent focus:outline-none ${
+                        genre === "romance"
+                          ? "border-rose-200 text-rose-950 bg-white"
+                          : "border-white/10 text-white bg-zinc-950"
+                      }`}
+                    >
+                      <option value="tight" className="dark:bg-zinc-900 text-black dark:text-white">Tight Line height</option>
+                      <option value="normal" className="dark:bg-zinc-900 text-black dark:text-white">Normal Line height</option>
+                      <option value="relaxed" className="dark:bg-zinc-900 text-black dark:text-white">Relaxed Line height</option>
+                    </select>
+                  </div>
+
+                  {/* Text Alignment selector */}
+                  <div className="space-y-2">
+                    <span className="text-[9px] uppercase font-bold tracking-widest opacity-50">Story Align Orientation</span>
+                    <select
+                      value={settings.textAlign}
+                      onChange={(e) => setSettings((s) => ({ ...s, textAlign: e.target.value as any }))}
+                      className={`w-full py-2 px-3 rounded-xl border text-[11px] font-serif bg-transparent focus:outline-none ${
+                        genre === "romance"
+                          ? "border-rose-200 text-rose-950 bg-white"
+                          : "border-white/10 text-white bg-zinc-950"
+                      }`}
+                    >
+                      <option value="left" className="dark:bg-zinc-900 text-black dark:text-white">Left Justified</option>
+                      <option value="center" className="dark:bg-zinc-900 text-black dark:text-white">Centered Display</option>
+                      <option value="justify" className="dark:bg-zinc-900 text-black dark:text-white">Full Block Justified</option>
+                    </select>
+                  </div>
+                </div>
               </div>
+
+              {/* SECTION: DETAILED VISUAL EFFECT CONTROLS */}
+              <div className="space-y-4 p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                <h4 className="text-[10px] font-mono uppercase tracking-wider font-extrabold pb-2 border-b border-black/5 dark:border-white/5 flex items-center gap-1.5 text-left">
+                  <Sparkles className="w-3.5 h-3.5 opacity-70 text-amber-400" /> Atmos & Sensory Simulation Realism
+                </h4>
+
+                {/* Sub Option: Typewriter Effect */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider">Holographic Typewriter</p>
+                    <p className="text-[9px] opacity-40">Reveal scene narrative segments using dynamic tracking letter timing</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings((s) => ({ ...s, typewriter: !s.typewriter }))}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${settings.typewriter ? `bg-${accent}-500` : "bg-white/10"}`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.typewriter ? "left-7" : "left-1"}`}
+                    />
+                  </button>
+                </div>
+
+                {/* Sub Option: Atmospheric Deep Glow */}
+                <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider">Atmospheric Text Backglow</p>
+                    <p className="text-[9px] opacity-40">Apply soft, mystical neon color aura behind narrative print</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings((s) => ({ ...s, textGlow: !s.textGlow }))}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${settings.textGlow ? `bg-${accent}-500` : "bg-white/10"}`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.textGlow ? "left-7" : "left-1"}`}
+                    />
+                  </button>
+                </div>
+
+                {/* Sub Option: Image Illustration display */}
+                <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider">Enable Story Imagery</p>
+                    <p className="text-[9px] opacity-40">Render rich visual illustrations representing scenes</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings((s) => ({ ...s, showImages: !s.showImages }))}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${settings.showImages ? `bg-${accent}-500` : "bg-white/10"}`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.showImages ? "left-7" : "left-1"}`}
+                    />
+                  </button>
+                </div>
+
+                {/* Sub Option: Reduced Motion comfort */}
+                <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider">Accessibility: Reduced Motion</p>
+                    <p className="text-[9px] opacity-40">Deactivate intensive panning backgrounds and floating particles</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings((s) => ({ ...s, reducedMotion: !s.reducedMotion }))}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${settings.reducedMotion ? `bg-${accent}-500` : "bg-white/10"}`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.reducedMotion ? "left-7" : "left-1"}`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Prompt footer info */}
+            <div className="pt-4 shrink-0 border-t border-rose-100 dark:border-white/5 flex gap-2 justify-end">
+              <button
+                onClick={() => setShowSettings(false)}
+                className={`px-6 py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black transition-all ${
+                  genre === "romance"
+                    ? "bg-rose-100 hover:bg-rose-200 text-rose-950 px-8"
+                    : "bg-white/5 hover:bg-white/10 text-white"
+                }`}
+              >
+                Sync Fate Profile
+              </button>
             </div>
           </div>
         </div>
@@ -1645,6 +1999,21 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Google Keep Workspace Board Modal */}
+      {showKeepNotes && currentStoryId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 backdrop-blur-xl bg-black/70 animate-fadeIn hover:cursor-default">
+          <div className="w-full max-w-6xl h-[85vh] md:h-[90vh]">
+            <GoogleKeepWorkspace
+              currentStoryId={currentStoryId}
+              currentNode={currentNode}
+              onClose={() => setShowKeepNotes(false)}
+              genre={genre}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Background Gradient */}
       <div
         style={{ opacity: bgOpacity }}
@@ -1731,6 +2100,25 @@ function App() {
               >
                 <LibraryIcon className="w-4 h-4" />
               </button>
+              {currentStoryId && (
+                <button
+                  onClick={() => setShowKeepNotes(!showKeepNotes)}
+                  className={`p-2 rounded-full transition-colors relative ${
+                    showKeepNotes
+                      ? "text-amber-400 bg-amber-500/20"
+                      : genre === "romance"
+                      ? "text-rose-400 hover:bg-rose-50"
+                      : "text-gray-400 hover:bg-white/5"
+                  }`}
+                  title="Collaborative Keep Note Board"
+                >
+                  <Lightbulb className="w-4 h-4" />
+                  <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(true)}
                 className={`p-2 rounded-full transition-colors ${
@@ -1847,6 +2235,24 @@ function App() {
                 <LogIn className="w-4 h-4" />
                 Login with Google
               </button>
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm max-w-sm mt-4">
+                  {error}
+                </div>
+              )}
+            </motion.div>
+          ) : loading && !genre ? (
+            <motion.div
+              key="loading-story"
+              initial={{ opacity: 0, filter: "blur(10px)" }}
+              animate={{ opacity: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, filter: "blur(10px)" }}
+              className="flex-1 flex flex-col items-center justify-center gap-8 py-32"
+            >
+              <Loader2 className="w-12 h-12 animate-spin text-white/50" />
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-40">
+                Retrieving Narrative Timeline...
+              </p>
             </motion.div>
           ) : !genre ? (
             <motion.div
@@ -1854,27 +2260,68 @@ function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col justify-center items-center text-center gap-16"
+              className="flex-1 flex flex-col justify-center items-center text-center gap-16 min-h-[70vh] relative overflow-visible"
             >
-              <div className="space-y-8 mb-10">
-                <div className="inline-block px-5 py-2 rounded-full border border-white/10 text-[10px] font-medium uppercase tracking-[0.4em] text-white/50 backdrop-blur-sm">
-                  Interactive AI Narrative
+              {/* Introduction Title Section with Calibrated Animators and Active Particles Backdrop */}
+              <div className="relative w-full max-w-4xl mx-auto py-12 px-6 rounded-[3rem] overflow-visible border border-white/5 bg-white/[0.01] backdrop-blur-[2px]">
+                {/* Immersive Particle Canopy */}
+                <Suspense fallback={null}>
+                  <IntroductionParticles activeGenre={hoveredGenre} reducedMotion={settings.reducedMotion} />
+                </Suspense>
+
+                {/* Content Elements on Top */}
+                <div className="relative z-10 space-y-6">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.8, ease: "easeOut" }}
+                    className="inline-block px-5 py-2 rounded-full border border-white/10 text-[10px] font-medium uppercase tracking-[0.4em] text-white/50 backdrop-blur-sm"
+                  >
+                    Interactive AI Narrative
+                  </motion.div>
+
+                  {/* Gently revealing title */}
+                  <motion.h1 
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 1.25, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
+                    className="text-6xl md:text-8xl font-serif font-medium tracking-tight text-white leading-none"
+                  >
+                    Orchestrate <br />
+                    <span className="italic text-white/70 animate-pulse duration-[6s]">
+                      Your Narrative
+                    </span>
+                  </motion.h1>
+
+                  {/* Soft staggered description fade-in */}
+                  <motion.p 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 1.0, ease: "easeOut", delay: 0.55 }}
+                    className="text-white/40 max-w-xl mx-auto text-base sm:text-lg leading-relaxed font-light tracking-wide"
+                  >
+                    An elegant exploration of branching fates, woven in real-time
+                    by artificial intelligence.
+                  </motion.p>
                 </div>
-                <h1 className="text-6xl md:text-8xl font-serif font-medium tracking-tight text-white mb-6 leading-tight">
-                  Orchestrate <br />
-                  <span className="italic text-white/70">
-                    Your Narrative
-                  </span>
-                </h1>
-                <p className="text-white/50 max-w-lg mx-auto text-lg leading-relaxed font-light tracking-wide">
-                  An elegant exploration of branching fates, woven in real-time
-                  by artificial intelligence.
-                </p>
               </div>
 
-              <div className="flex flex-col md:flex-row gap-6 w-full max-w-5xl">
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm w-full max-w-xl mx-auto flex items-center justify-between z-10">
+                  <span>{error}</span>
+                  <button onClick={() => setError(null)} className="text-white bg-red-500/20 hover:bg-red-500/40 px-3 py-1 rounded-full text-xs transition-colors">
+                     Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Genre Choice Grid cards containing hovering sensor updates */}
+              <div className="flex flex-col md:flex-row gap-6 w-full max-w-5xl z-10">
+                {/* romance genre card */}
                 <button
                   onClick={() => startStory("romance")}
+                  onMouseEnter={() => setHoveredGenre("romance")}
+                  onMouseLeave={() => setHoveredGenre(null)}
                   className="group relative flex-1 aspect-[10/13] bg-[#FCF8F8] border border-rose-100/50 rounded-3xl overflow-hidden shadow-2xl hover:shadow-rose-100 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
@@ -1894,8 +2341,11 @@ function App() {
                   </div>
                 </button>
 
+                {/* crime genre card */}
                 <button
                   onClick={() => startStory("crime")}
+                  onMouseEnter={() => setHoveredGenre("crime")}
+                  onMouseLeave={() => setHoveredGenre(null)}
                   className="group relative flex-1 aspect-[10/13] bg-[#0A0C10] border border-white/5 rounded-3xl overflow-hidden shadow-2xl hover:shadow-white/5 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
@@ -1915,8 +2365,11 @@ function App() {
                   </div>
                 </button>
 
+                {/* paranormal genre card */}
                 <button
                   onClick={() => startStory("paranormal")}
+                  onMouseEnter={() => setHoveredGenre("paranormal")}
+                  onMouseLeave={() => setHoveredGenre(null)}
                   className="group relative flex-1 aspect-[10/13] bg-[#0D0A14] border border-purple-500/10 rounded-3xl overflow-hidden shadow-2xl hover:shadow-purple-900/30 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
@@ -2290,9 +2743,17 @@ function App() {
               </div>
             </motion.div>
           ) : (
-            <div className="flex-1 flex flex-col relative" ref={contentRef}>
+            <motion.div
+              key="main-story"
+              className="flex-1 flex flex-col relative"
+              ref={contentRef}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5 }}
+            >
               <AnimatePresence mode="wait">
-                {!currentNode && !loading && genre && (
+                {(!currentNode && !loading && genre) ? (
                   <motion.div
                     key="resuming"
                     initial={{ opacity: 0, scale: 0.95, filter: "blur(10px)" }}
@@ -2308,9 +2769,7 @@ function App() {
                       Resuming Narrative...
                     </p>
                   </motion.div>
-                )}
-
-                {loading && !currentNode && (
+                ) : (loading && !currentNode) ? (
                   <motion.div
                     key="loading-node"
                     initial={{ opacity: 0, scale: 0.95, filter: "blur(10px)" }}
@@ -2339,9 +2798,7 @@ function App() {
                       </p>
                     </div>
                   </motion.div>
-                )}
-
-                {error && (
+                ) : (error && !currentNode) ? (
                   <motion.div
                     key="error"
                     initial={{ opacity: 0, scale: 0.95, filter: "blur(10px)" }}
@@ -2352,15 +2809,13 @@ function App() {
                   >
                     <span>{error}</span>
                     <button
-                      onClick={() => genre && startStory(genre)}
+                      onClick={() => setError(null)}
                       className="font-black uppercase tracking-widest text-[10px] bg-red-500 text-white px-4 py-2 rounded-full"
                     >
-                      Retry Connection
+                      Dismiss
                     </button>
                   </motion.div>
-                )}
-
-                {currentNode && (
+                ) : currentNode ? (
                   <motion.div
                     key={currentNode.sceneTitle || allSteps.length}
                     initial={{ opacity: 0, scale: 1.05, filter: "blur(10px)" }}
@@ -2369,6 +2824,17 @@ function App() {
                     transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
                     className="flex flex-col gap-12 pb-32"
                   >
+                    {error && (
+                      <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-3xl text-red-500 text-xs flex items-center justify-between shadow-xl backdrop-blur-md">
+                        <span>{error}</span>
+                        <button
+                          onClick={() => setError(null)}
+                          className="font-black uppercase tracking-widest text-[8px] bg-red-500 text-white px-3.5 py-1.5 rounded-full hover:bg-red-600 transition"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
                     {/* Scene Visual Container */}
                     <motion.div
                       initial={{ scale: 0.98, opacity: 0 }}
@@ -2405,18 +2871,6 @@ function App() {
                               loop
                               muted
                               playsInline
-                            />
-                          ) : currentNode.imageUrl ||
-                            (currentNode.mediaType === "video" &&
-                              currentNode.videoUrl === "local-blob-session") ? (
-                            <img
-                              src={
-                                currentNode.imageUrl ||
-                                "https://images.unsplash.com/photo-1464802686167-b939a6910659?q=80&w=2070&auto=format&fit=crop"
-                              }
-                              className="w-full h-full object-cover"
-                              alt="Scene Visual"
-                              referrerPolicy="no-referrer"
                             />
                           ) : imageLoading || videoStatus.status !== "idle" ? (
                             <div className="flex flex-col items-center gap-8 w-full max-w-sm px-6">
@@ -2470,8 +2924,27 @@ function App() {
                                 </div>
                               </div>
                             </div>
+                          ) : currentNode.imageUrl && !currentNode.imageGenFailed ? (
+                            <EnhancedImageContainer
+                              imageUrl={currentNode.imageUrl}
+                              genre={genre}
+                              mood={currentNode.mood}
+                              showImages={settings.showImages}
+                              alt="Scene Visual"
+                            />
                           ) : (
-                            <Camera className="w-16 h-16 opacity-5" />
+                            <ImageFallbackContainer
+                              genre={genre}
+                              sceneTitle={currentNode.sceneTitle}
+                              imagePrompt={currentNode.imagePrompt || currentNode.sceneDescription}
+                              onRetry={() => {
+                                generateImage(
+                                  currentNode.imagePrompt || currentNode.sceneDescription,
+                                  currentNode.mood,
+                                  currentStoryId,
+                                );
+                              }}
+                            />
                           )}
 
                           {currentNode && (
@@ -2540,9 +3013,17 @@ function App() {
                           </h2>
                         </div>
 
-                        <div
+                         <div
                           id="story-content"
-                          className={`prose max-w-none transition-all duration-700 hyphens-auto whitespace-pre-wrap ${bodyFont} ${fontSizeClass} ${lineSpacingClass} ${textAlignClass} ${fontWeightClass} ${
+                          className={`prose max-w-none transition-all duration-700 hyphens-auto whitespace-pre-wrap ${bodyFont} ${fontSizeClass} ${lineSpacingClass} ${textAlignClass} ${fontWeightClass} ${letterSpacingClass} ${
+                            settings.textGlow
+                              ? genre === "romance"
+                                ? "drop-shadow-[0_1px_4px_rgba(159,18,57,0.15)]"
+                                : genre === "paranormal"
+                                  ? "drop-shadow-[0_0_15px_rgba(168,85,247,0.35)]"
+                                  : "drop-shadow-[0_0_10px_rgba(56,189,248,0.35)]"
+                              : ""
+                          } ${
                             genre === "romance"
                               ? "text-rose-900/80"
                               : genre === "paranormal"
@@ -2615,6 +3096,28 @@ function App() {
                                             }`}
                                           >
                                             ◦ {milestone.replace(/_/g, " ")}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {Object.keys(consequences).length > 0 && (
+                                    <div className="space-y-4">
+                                      <h3 className="text-xs uppercase font-black tracking-widest opacity-60">
+                                        Echoes of Fate
+                                      </h3>
+                                      <div className="flex flex-col gap-2">
+                                        {Object.entries(consequences).map(([key, desc], i) => (
+                                          <div
+                                            key={i}
+                                            className={`p-3 rounded-xl border text-xs font-bold font-mono ${
+                                              genre === "romance"
+                                                ? "border-rose-100 bg-rose-50 text-rose-900"
+                                                : "border-white/10 bg-white/5 text-white/80"
+                                            }`}
+                                          >
+                                            ◦ {desc}
                                           </div>
                                         ))}
                                       </div>
@@ -2769,10 +3272,23 @@ function App() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Branching Narrative System Visual Tree Tracker */}
+                    {allSteps.length > 0 && (
+                      <BranchingTimeline
+                        allSteps={allSteps}
+                        currentStoryId={currentStoryId}
+                        genre={genre}
+                        onBranchToStep={branchToStep}
+                        relationships={relationships}
+                        consequences={consequences}
+                        storyMilestones={storyMilestones}
+                      />
+                    )}
                   </motion.div>
-                )}
+                ) : null}
               </AnimatePresence>
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </main>
