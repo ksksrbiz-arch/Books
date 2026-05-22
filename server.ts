@@ -677,7 +677,7 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
 });
 
 app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
-  const { history, choice, genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis, relationships, storyMilestones, consequences, isFinalChoice } = req.body;
+  const { history, choice, genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis, relationships, storyMilestones, consequences, isFinalChoice, customTwist } = req.body;
   
   const cacheKey = getCacheKey("continue", req.body);
   const cached = apiCache.get(cacheKey);
@@ -721,6 +721,11 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
         - True Crime: Evaluate Suspicion vs Milestones (Evidence). High evidence/low suspicion -> Justice. High suspicion -> Fugitive/Caught.
         - Romance: Evaluate Affinity. >80 -> Commitment, 40-79 -> Friends, <30 -> Heartbreak.
     ` : ''}
+    
+    ${customTwist ? `CREATIVE WRITER TWIST DIRECTION:
+    - The creator has forced a narrative instruction: "${customTwist}".
+    - You MUST incorporate this creative direction, plot element, twist, or character action into this scene, resolving it naturally with literary skill.
+    ` : ''}
 
     CONTINUATION DIRECTIVES:
     1. PERSISTENCE: Maintain consistent character voices, physical locations, and established stakes.
@@ -744,6 +749,8 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     
     USER ACTION: ${choice.text}
     ${choice.nextContext === 'user-defined-action' ? 'NOTE: This is a custom action from the user. React accordingly.' : `CONTEXT OF CHOICE: ${choice.nextContext}`}
+    
+    ${customTwist ? `WRITER DIRECTIVE / PLOT TWIST: ${customTwist}. Make sure to fulfill this instruction clearly and dramatically inside this new scene output.` : ''}
     
     Now, generate the next scene.
   `;

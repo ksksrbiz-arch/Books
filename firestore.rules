@@ -110,5 +110,17 @@ service cloud.firestore {
         }
       }
     }
+
+    match /shared_echoes/{echoId} {
+      allow get: if true;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+    }
+
+    match /rooms/{roomId} {
+      allow get: if true;
+      allow create: if isSignedIn() && incoming().hostId == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && existing().hostId == request.auth.uid;
+    }
   }
 }

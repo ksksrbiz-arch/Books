@@ -36,6 +36,14 @@ import {
   Menu,
   Link,
   ArrowRight,
+  Share2,
+  Download,
+  Plus,
+  MessageSquare,
+  ChevronDown,
+  Check,
+  ExternalLink,
+  Lock,
 } from "lucide-react";
 import {
   auth,
@@ -319,9 +327,70 @@ function App() {
       }
     }
   }, []);
+
+  // Real-time Collab variables
+  const [roomCode, setRoomCode] = useState("");
+  const [activeRoom, setActiveRoom] = useState<any | null>(null);
+  const [chatMessage, setChatMessage] = useState("");
+  const [joiningRoomCode, setJoiningRoomCode] = useState("");
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
+  const [isJoiningRoom, setIsJoiningRoom] = useState(false);
+
+  const [sharedEchoSnapshot, setSharedEchoSnapshot] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const echoId = params.get("sharedEcho");
+      if (echoId) {
+        const loadSharedSnapshot = async () => {
+          try {
+            const docRef = doc(db, "shared_echoes", echoId);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              setSharedEchoSnapshot(docSnap.data());
+            }
+          } catch (e) {
+            console.error("Failed loading shared snapshot: ", e);
+          }
+        };
+        loadSharedSnapshot();
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeRoom || !activeRoom.roomId) return;
+    const roomRef = doc(db, "rooms", activeRoom.roomId);
+    const unsubscribe = onSnapshot(roomRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setActiveRoom({ roomId: snapshot.id, ...data });
+        
+        if (data.activeStoryId && data.activeStoryId !== currentStoryId) {
+          loadSharedStoryState(data.activeStoryId);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [activeRoom?.roomId, currentStoryId]);
   const [hoveredStoryId, setHoveredStoryId] = useState<string | null>(null);
   const [hoveredGenre, setHoveredGenre] = useState<"romance" | "crime" | "paranormal" | null>(null);
   const [allSteps, setAllSteps] = useState<any[]>([]);
+
+  // Dual Modes & Creative Suite States
+  const [appMode, setAppMode] = useState<"player" | "creator">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("appMode") as "player" | "creator") || "player";
+    }
+    return "player";
+  });
+  const [customTwist, setCustomTwist] = useState("");
+  const [creatorTab, setCreatorTab] = useState<"outline" | "grimoire" | "parameters" | "collab" | "export">("outline");
+  const [showCreatorPanel, setShowCreatorPanel] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [sharedLink, setSharedLink] = useState<string | null>(null);
+
   const [choicePreviews, setChoicePreviews] = useState<Record<number, boolean>>({});
   const [selectedText, setSelectedText] = useState("");
   const [selectionCoords, setSelectionCoords] = useState<{ x: number; y: number } | null>(null);
@@ -1204,6 +1273,7 @@ function App() {
           storyMilestones,
           consequences,
           isFinalChoice,
+          customTwist: appMode === "creator" ? customTwist : "",
         }),
       });
       if (!response.ok) throw new Error("Failed to continue story");
@@ -1271,6 +1341,7 @@ function App() {
       setCurrentNode(null);
       setTimeout(() => {
         setCurrentNode(data);
+        setCustomTwist("");
       }, 50);
 
       // Update Firestore
@@ -1355,6 +1426,288 @@ function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // --- Creator & Collab Helpers ---
+
+  // Export Story Package
+  const handleExportStory = () => {
+    if (!currentNode) return;
+    try {
+      const title = storyParameters.archetype || "My Echoes Story";
+      let md = `# STORY EXPORT: ${title}\n`;
+      md += `**Genre**: ${genre}\n`;
+      md += `**Backstory**: ${storyParameters.backstory}\n`;
+      md += `**Tone**: ${storyParameters.tone} | **Complexity**: ${storyParameters.complexity}\n\n`;
+      
+      md += `## CHRONICLES / NARRATIVE TRAILING:\n\n`;
+      allSteps.forEach((step, idx) => {
+        md += `### Scene ${idx + 1}: ${step.sceneTitle}\n`;
+        md += `${step.sceneDescription}\n\n`;
+        if (step.choiceTaken) {
+          md += `*Choice Taken*: **${step.choiceTaken}**\n\n`;
+        }
+        if (step.imagePrompt) {
+          md += `*Atmosphere Visual Prompt*: _${step.imagePrompt}_\n\n`;
+        }
+        md += `---------------------------------\n\n`;
+      });
+
+      md += `\n## GRIMOIRE & CODEX DISCOVERIES:\n\n`;
+      md += `### Active Relationships\n`;
+      Object.keys(relationships).forEach(name => {
+        const rel = relationships[name];
+        md += `- **${name}**: Affinity: ${rel.affinity}% | Suspicion: ${rel.suspicion}%\n`;
+      });
+      
+      md += `\n### Achieved Goals & Milestones:\n`;
+      storyMilestones.forEach(milestone => {
+        md += `- ${milestone}\n`;
+      });
+
+      md += `\n### Long-Term Consequences of Choices:\n`;
+      Object.keys(consequences).forEach(key => {
+        md += `- **${key}**: ${consequences[key]}\n`;
+      });
+
+      // Save as file in browser
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}_grimoire_bundle.md`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Publish / Share Echo Pathway
+  const handleShareStory = async () => {
+    if (!user || !currentStoryId) return;
+    setIsSharing(true);
+    setSharedLink(null);
+    try {
+      const echoId = `shared_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      const sharedDocRef = doc(db, "shared_echoes", echoId);
+      
+      const snapshotSteps = allSteps.map(step => ({
+        sceneTitle: step.sceneTitle || "Uncharted Scene",
+        sceneDescription: step.sceneDescription || "",
+        choiceTaken: step.choiceTaken || null,
+        imageUrl: step.imageUrl || null,
+        imagePrompt: step.imagePrompt || null
+      }));
+
+      await setDoc(sharedDocRef, {
+        storyId: currentStoryId,
+        userId: user.uid,
+        creatorName: user.displayName || user.email?.split("@")[0] || "Mysterious Creator",
+        genre: genre,
+        characterArchetype: storyParameters.archetype,
+        customBasis: storyParameters.customBasis,
+        stepsSnapshot: snapshotSteps,
+        createdAt: new Date().toISOString()
+      });
+
+      const urlValue = `${window.location.origin}/?sharedEcho=${echoId}`;
+      setSharedLink(urlValue);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  // Create Collaborative Lobby
+  const handleCreateRoom = async () => {
+    if (!user || !currentStoryId) return;
+    setIsCreatingRoom(true);
+    try {
+      const code = `ROOM-${Math.floor(1000 + Math.random() * 9000)}`;
+      setRoomCode(code);
+      const roomRef = doc(db, "rooms", code);
+      
+      const newRoom = {
+        roomId: code,
+        hostId: user.uid,
+        hostName: user.displayName || user.email?.split("@")[0] || "Host",
+        genre: genre,
+        status: "active",
+        activeStoryId: currentStoryId,
+        participants: [{ uid: user.uid, name: user.displayName || user.email?.split("@")[0] || "Host" }],
+        currentVotes: {},
+        chat: [{ sender: "System", message: `Collab Space ${code} is active! Share the code to invite allies.`, timestamp: new Date().toISOString() }],
+        createdAt: new Date().toISOString()
+      };
+
+      await setDoc(roomRef, newRoom);
+      setActiveRoom(newRoom);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsCreatingRoom(false);
+    }
+  };
+
+  // Join Collaborative Lobby
+  const handleJoinRoom = async () => {
+    if (!user || !joiningRoomCode) return;
+    setIsJoiningRoom(true);
+    setError(null);
+    try {
+      const cleanCode = joiningRoomCode.trim().toUpperCase();
+      const roomRef = doc(db, "rooms", cleanCode);
+      const roomDoc = await getDoc(roomRef);
+      
+      if (!roomDoc.exists()) {
+        throw new Error("Collab room does not exist. Check code.");
+      }
+
+      const roomData = roomDoc.data();
+      const name = user.displayName || user.email?.split("@")[0] || "Allie";
+      
+      // Add participant if not already present
+      const hasJoined = (roomData.participants || []).some((p: any) => p.uid === user.uid);
+      let updatedParticipants = [...(roomData.participants || [])];
+      if (!hasJoined) {
+        updatedParticipants.push({ uid: user.uid, name });
+      }
+
+      const updatedChat = [
+        ...(roomData.chat || []),
+        { sender: "System", message: `${name} has joined the fate-weaving lobby.`, timestamp: new Date().toISOString() }
+      ];
+
+      await setDoc(roomRef, {
+        participants: updatedParticipants,
+        chat: updatedChat
+      }, { merge: true });
+
+      setActiveRoom({ roomId: cleanCode, ...roomData, participants: updatedParticipants, chat: updatedChat });
+      setRoomCode(cleanCode);
+      
+      // Load active story or trigger load
+      if (roomData.activeStoryId) {
+        loadSharedStoryState(roomData.activeStoryId);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setIsJoiningRoom(false);
+    }
+  };
+
+  // Live Sync Story State (called onRoomSync change)
+  const loadSharedStoryState = async (storyId: string) => {
+    if (!user) return;
+    try {
+      const storyDoc = await getDoc(doc(db, "users", user.uid, "stories", storyId));
+      if (storyDoc.exists()) {
+        const storyData = storyDoc.data();
+        setCurrentStoryId(storyId);
+        setGenre(storyData.genre);
+        setStoryParameters({
+          length: storyData.storyLength || "medium",
+          archetype: storyData.characterArchetype || "",
+          backstory: storyData.backstory || "",
+          complexity: storyData.plotComplexity || "complex",
+          tone: storyData.tone || "intense",
+          isAdultContent: storyData.isAdultContent || false,
+          customBasis: storyData.customBasis || ""
+        });
+        
+        // Fetch steps
+        const stepsCol = collection(db, "users", user.uid, "stories", storyId, "steps");
+        const stepsSnapshot = await getDocs(query(stepsCol, orderBy("timestamp", "asc")));
+        const steps = stepsSnapshot.docs.map(d => d.data());
+        if (steps.length > 0) {
+          setAllSteps(steps as any[]);
+          setCurrentNode(steps[steps.length - 1] as StoryNode);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Leave active room
+  const handleLeaveRoom = async () => {
+    if (!user || !activeRoom) return;
+    try {
+      const cleanCode = activeRoom.roomId;
+      const roomRef = doc(db, "rooms", cleanCode);
+      const name = user.displayName || user.email?.split("@")[0] || "Allie";
+      
+      const filteredParticipants = (activeRoom.participants || []).filter((p: any) => p.uid !== user.uid);
+      const updatedChat = [
+        ...(activeRoom.chat || []),
+        { sender: "System", message: `${name} has left the fate-weaving lobby.`, timestamp: new Date().toISOString() }
+      ];
+
+      await setDoc(roomRef, {
+        participants: filteredParticipants,
+        chat: updatedChat
+      }, { merge: true });
+
+      setActiveRoom(null);
+      setRoomCode("");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Cast choice vote in real-time
+  const handleCastVote = async (choiceIndex: number) => {
+    if (!user || !activeRoom) return;
+    try {
+      const roomRef = doc(db, "rooms", activeRoom.roomId);
+      const votes = { ...(activeRoom.currentVotes || {}) };
+      
+      // Remove previous vote by this user if any
+      Object.keys(votes).forEach(idxStr => {
+        if (Array.isArray(votes[idxStr])) {
+          votes[idxStr] = votes[idxStr].filter((uid: string) => uid !== user.uid);
+        }
+      });
+
+      // Add vote
+      const indexKey = String(choiceIndex);
+      if (!Array.isArray(votes[indexKey])) {
+        votes[indexKey] = [];
+      }
+      votes[indexKey].push(user.uid);
+
+      await setDoc(roomRef, {
+        currentVotes: votes
+      }, { merge: true });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Send Chat message
+  const handleSendChatMessage = async () => {
+    if (!user || !activeRoom || !chatMessage.trim()) return;
+    try {
+      const roomRef = doc(db, "rooms", activeRoom.roomId);
+      const name = user.displayName || user.email?.split("@")[0] || "Allie";
+      const newMsg = {
+        sender: name,
+        message: chatMessage.trim(),
+        timestamp: new Date().toISOString()
+      };
+      
+      await setDoc(roomRef, {
+        chat: [...(activeRoom.chat || []), newMsg]
+      }, { merge: true });
+      
+      setChatMessage("");
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -2383,6 +2736,24 @@ function App() {
         />
       </div>
 
+      {sharedEchoSnapshot && (
+        <div className="sticky top-0 z-[120] w-full bg-amber-500 text-slate-950 px-4 py-2.5 flex justify-between items-center font-bold text-xs shrink-0 shadow-lg text-left">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 animate-pulse text-amber-950" />
+            <span>You are reading a Shared Public Echo created by <strong className="uppercase font-extrabold text-amber-950">{sharedEchoSnapshot.creatorName}</strong> ({sharedEchoSnapshot.genre || "Mystery"} | Archetype: {sharedEchoSnapshot.characterArchetype || "unknown"})</span>
+          </div>
+          <button
+            onClick={() => {
+              setSharedEchoSnapshot(null);
+              window.history.pushState({}, "", window.location.pathname);
+            }}
+            className="px-3 py-1 hover:bg-slate-900 hover:text-white rounded transition-colors text-[10px] font-black uppercase cursor-pointer"
+          >
+            Close Preview
+          </button>
+        </div>
+      )}
+
       {/* HUD / Header */}
       <nav
         className={`fixed top-0 w-full z-50 p-6 border-b transition-all duration-700 ${
@@ -2431,6 +2802,56 @@ function App() {
           {/* Desktop HUD Panel */}
           {user && (
             <div className="hidden md:flex items-center gap-2">
+              {/* App Mode Switcher */}
+              <div className="flex items-center gap-1 bg-white/5 border border-white/10 p-1 rounded-full mr-2">
+                <button
+                  onClick={() => {
+                    setAppMode("player");
+                    localStorage.setItem("appMode", "player");
+                  }}
+                  className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-full transition-all flex items-center gap-1 cursor-pointer ${
+                    appMode === "player"
+                      ? "bg-sky-500 text-slate-950 font-bold shadow-md shadow-sky-500/20"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                  title="Immersive Playing Mode"
+                >
+                  <Eye className="w-3 h-3" /> Play
+                </button>
+                <button
+                  onClick={() => {
+                    setAppMode("creator");
+                    localStorage.setItem("appMode", "creator");
+                  }}
+                  className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-full transition-all flex items-center gap-1 cursor-pointer ${
+                    appMode === "creator"
+                      ? "bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                  title="Creative Writer Suite"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-950" /> Writer
+                </button>
+              </div>
+
+              {/* Creator Suite Tool Panel Toggle */}
+              {appMode === "creator" && (
+                <button
+                  onClick={() => setShowCreatorPanel(!showCreatorPanel)}
+                  className={`p-2 rounded-full transition-all relative ${
+                    showCreatorPanel
+                      ? "text-amber-400 bg-amber-500/20 border border-amber-500/30 shadow-[0_0_11px_rgba(245,158,11,0.3)]"
+                      : "text-gray-400 hover:bg-white/5"
+                  }`}
+                  title="Configure Storyboard & Parameters"
+                >
+                  <Sliders className="w-4 h-4 text-amber-400" />
+                  <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400"></span>
+                  </span>
+                </button>
+              )}
+
               <button
                 onClick={() => setShowTutorial(true)}
                 className={`p-2 rounded-full transition-colors ${
@@ -2797,7 +3218,76 @@ function App() {
 
       <main className="pt-32 pb-20 px-6 max-w-5xl mx-auto min-h-screen relative z-10 flex flex-col">
         <AnimatePresence mode="wait">
-          {authLoading ? (
+          {sharedEchoSnapshot ? (
+            <motion.div
+              key="shared_echo_view"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="space-y-12 max-w-2xl mx-auto w-full text-left"
+            >
+              <div className="space-y-4 text-center">
+                <span className="bg-amber-500/10 text-amber-300 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border border-amber-500/20">
+                  Shared Storyboard
+                </span>
+                <h1 className="text-4xl font-serif text-white tracking-tight">
+                  {sharedEchoSnapshot.characterArchetype ? `The Destiny of the ${sharedEchoSnapshot.characterArchetype}` : "A Shared Fate"}
+                </h1>
+                <p className="text-xs text-gray-400">
+                  Woven by <strong className="text-gray-200">{sharedEchoSnapshot.creatorName}</strong> on {new Date(sharedEchoSnapshot.createdAt).toLocaleDateString()}
+                </p>
+                <div className="h-px bg-white/10 w-24 mx-auto" />
+              </div>
+
+              <div className="space-y-10">
+                {sharedEchoSnapshot.stepsSnapshot?.map((step: any, idx: number) => (
+                  <div key={idx} className="space-y-4 p-8 rounded-[2rem] border border-white/5 bg-slate-900/40 backdrop-blur-md">
+                    <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                      <span className="text-[10px] uppercase font-black tracking-widest text-[#B5BAC9]">
+                        Scene {idx + 1}: {step.sceneTitle}
+                      </span>
+                    </div>
+
+                    {step.imageUrl && (
+                      <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden border border-white/10">
+                        <img
+                          src={step.imageUrl}
+                          alt="Atmospheric Scene Visual"
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+
+                    <p className="text-[#DEE2E6] text-sm leading-relaxed whitespace-pre-line font-serif">
+                      {step.sceneDescription}
+                    </p>
+
+                    {step.choiceTaken && (
+                      <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/5 mt-4">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block mb-1">Choice Taken:</span>
+                        <p className="text-amber-200 text-xs font-semibold">{step.choiceTaken}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-8 rounded-[2rem] border border-white/5 bg-[#0b1019] text-center space-y-4">
+                <h3 className="text-lg font-serif text-white font-medium">Weave Your Own Choices</h3>
+                <p className="text-xs text-[#9FA4B6] max-w-sm mx-auto">Sign in to start your own dynamic AI story and explore alternative realities in multiple genres!</p>
+                <button
+                  onClick={() => {
+                    setSharedEchoSnapshot(null);
+                    window.history.pushState({}, "", window.location.pathname);
+                  }}
+                  className="px-6 py-2.5 bg-amber-500 text-slate-950 rounded-full font-black text-xs uppercase tracking-wider hover:bg-amber-600 transition-all cursor-pointer inline-block"
+                >
+                  Create My Story
+                </button>
+              </div>
+            </motion.div>
+          ) : authLoading ? (
             <motion.div
               key="loading"
               initial={{ opacity: 0 }}
@@ -4216,6 +4706,395 @@ function App() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Creator Suite Controller Panel Overlay */}
+      {showCreatorPanel && appMode === "creator" && (
+        <>
+          <div
+            onClick={() => setShowCreatorPanel(false)}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[92]"
+          />
+          <div
+            className="fixed top-0 right-0 h-full w-full max-w-lg z-[93] shadow-2xl border-l flex flex-col bg-slate-950 border-amber-500/10 text-gray-200"
+          >
+            <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#070b12]">
+              <div className="flex items-center gap-3">
+                <Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
+                <div>
+                  <h3 className="font-extrabold text-[#ECEEF2] text-sm tracking-widest uppercase">
+                    Creator Suite & Storyboard
+                  </h3>
+                  <p className="text-[9px] text-amber-500/80 font-black tracking-widest uppercase">Creative Professional Deck</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCreatorPanel(false)}
+                className="p-2 hover:bg-white/5 rounded-full transition-colors text-gray-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Selector Tabs */}
+            <div className="flex border-b border-white/5 bg-[#0b1019] p-1 gap-1">
+              {(["outline", "grimoire", "parameters", "collab", "export"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setCreatorTab(tab)}
+                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded transition-all cursor-pointer ${
+                    creatorTab === tab
+                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[#050811]">
+              
+              {/* TAB: OUTLINE */}
+              {creatorTab === "outline" && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Story Map & Branch Planner</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Below is the linear sequence of traversed realities in this active branch. Click any step to rewind, branch, or plot an alternative path.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {allSteps.length === 0 ? (
+                      <div className="text-center italic opacity-40 py-8 text-xs">No compiled story steps found. Start a fate to populate.</div>
+                    ) : (
+                      allSteps.map((step, idx) => (
+                        <div
+                          key={idx}
+                          role="button"
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to rewind and branch back to Scene ${idx + 1}? Subsequent steps will become an alternative unexplored reality.`)) {
+                              branchToStep(idx);
+                            }
+                          }}
+                          className="p-4 rounded-xl border border-white/5 bg-slate-900/60 hover:border-amber-500/30 hover:bg-slate-950/80 transition-all text-left flex items-start gap-4 group cursor-pointer"
+                        >
+                          <div className="w-6 h-6 rounded-md bg-amber-500/10 text-amber-400 flex items-center justify-center text-xs font-mono font-bold shrink-0">
+                            {idx + 1}
+                          </div>
+                          <div className="flex-1 space-y-1 overflow-hidden">
+                            <h5 className="text-xs font-bold text-gray-200 uppercase group-hover:text-amber-400 transition-colors">
+                              {step.sceneTitle}
+                            </h5>
+                            <p className="text-[11px] text-gray-400 line-clamp-2 leading-relaxed">
+                              {step.sceneDescription}
+                            </p>
+                            {step.choiceTaken && (
+                              <div className="text-[10px] text-amber-500/80 font-mono font-bold uppercase mt-1">
+                                Decision Take: {step.choiceTaken}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: GRIMOIRE */}
+              {creatorTab === "grimoire" && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">World Grimoire Settings</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">Modify backstories or custom basis prompts to alter subsequent AI plot generations.</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Character Archetype</label>
+                      <input
+                        type="text"
+                        value={storyParameters.archetype || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, archetype: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Backstory & Motivations</label>
+                      <textarea
+                        rows={3}
+                        value={storyParameters.backstory || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, backstory: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Basis Premises / User Universe Guidelines</label>
+                      <textarea
+                        rows={3}
+                        value={storyParameters.customBasis || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, customBasis: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: PARAMETERS */}
+              {creatorTab === "parameters" && (
+                <div className="space-y-5">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Engine & Gen parameters</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">Override dynamic temperature, tone guidelines, and plot complexities.</p>
+                  </div>
+
+                  {/* Twist directive */}
+                  <div className="space-y-2 border border-amber-500/20 bg-amber-500/5 p-4 rounded-xl text-left">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" /> Creative Plot Twist Directive
+                      </span>
+                      {customTwist && (
+                        <button
+                          onClick={() => setCustomTwist("")}
+                          className="text-[9px] font-bold uppercase text-[#9A9EAB] hover:text-white"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      rows={3}
+                      placeholder="e.g., Introduce a mysterious figure in a crimson hood claiming they have a letter from the victim..."
+                      value={customTwist}
+                      onChange={(e) => setCustomTwist(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-amber-500/20 rounded-lg text-white focus:border-amber-500/50 outline-none leading-relaxed"
+                    />
+                    <p className="text-[9px] text-gray-400">This twist will be injected and consumed by the AI model during the next choice generation, then cleared automatically.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">Story Tone guideline</label>
+                      <select
+                        value={storyParameters.tone || "intense"}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, tone: e.target.value as any }))}
+                        className="w-full px-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white"
+                      >
+                        <option value="intense">Intense & Noir</option>
+                        <option value="gothic">Gothic / Macabre</option>
+                        <option value="poetic">Poetic & Melancholic</option>
+                        <option value="noir">Crime Noir / Hardboiled</option>
+                        <option value="whimsical">Cozy / Whimsical</option>
+                        <option value="dramatic">High Drama & Romance</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">Plot Complexity</label>
+                      <select
+                        value={storyParameters.complexity || "complex"}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, complexity: e.target.value as any }))}
+                        className="w-full px-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white"
+                      >
+                        <option value="simple">Simple & Direct</option>
+                        <option value="complex">Layered & Sophisticated</option>
+                        <option value="labyrinthine">Labyrinthine & Mind-twisting</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">Story Length Target</label>
+                      <select
+                        value={storyParameters.length || "medium"}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, length: e.target.value as any }))}
+                        className="w-full px-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white"
+                      >
+                        <option value="short">Short (3 turns/Epilogue)</option>
+                        <option value="medium">Medium (6 turns/Epilogue)</option>
+                        <option value="long">Long (9 turns/Epilogue)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: COLLAB */}
+              {creatorTab === "collab" && (
+                <div className="space-y-5">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Collaborative Storytelling Lobby</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Host or join a live storytelling room to shape fates together in real-time. Joiners can vote on choice buttons and communicate in the room log.
+                    </p>
+                  </div>
+
+                  {!activeRoom ? (
+                    <div className="space-y-4">
+                      {/* Host action */}
+                      <button
+                        onClick={handleCreateRoom}
+                        disabled={isCreatingRoom || !currentStoryId}
+                        className="w-full py-3 px-4 bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50 text-amber-300 font-bold text-xs uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" /> Host New Lobby for current story
+                      </button>
+                      {!currentStoryId && (
+                        <p className="text-[10px] text-red-400/80 text-center italic">Start a story first to host a lobby.</p>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <div className="h-px flex-1 bg-white/10" />
+                        <span className="text-[9px] font-bold uppercase text-gray-500">OR JOIN WITH CODE</span>
+                        <div className="h-px flex-1 bg-white/10" />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. ROOM-4831"
+                          value={joiningRoomCode}
+                          onChange={(e) => setJoiningRoomCode(e.target.value)}
+                          className="flex-1 px-4 py-2 bg-slate-900 border border-white/10 rounded-xl text-white font-mono text-center text-sm font-bold uppercase"
+                        />
+                        <button
+                          onClick={handleJoinRoom}
+                          disabled={isJoiningRoom || !joiningRoomCode}
+                          className="px-6 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                        >
+                          Join
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Active Lobby Stats */}
+                      <div className="p-4 rounded-xl bg-slate-900 border border-amber-500/20 space-y-3 text-left">
+                        <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                          <span className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono">
+                            COL-LAB STATE: {activeRoom.roomId}
+                          </span>
+                          <button
+                            onClick={handleLeaveRoom}
+                            className="text-[9px] font-bold uppercase text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                          >
+                            <LogOut className="w-3 h-3" /> Leave Lobby
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-gray-400 space-y-1">
+                          <p><strong>Host ID</strong>: {activeRoom.hostName}</p>
+                          <p><strong>Active Allies</strong>: {(activeRoom.participants || []).length} present</p>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {activeRoom.participants?.map((p: any, idx: number) => (
+                              <div key={idx} className="bg-white/5 border border-white/5 px-2 py-0.5 rounded text-[10px] font-semibold text-gray-300 font-mono">
+                                • {p.name}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Lobby Chat Room */}
+                      <div className="border border-white/5 rounded-xl flex flex-col h-60 bg-slate-950 overflow-hidden">
+                        <div className="p-2 border-b border-white/5 bg-slate-900 text-left">
+                          <span className="text-[10px] uppercase font-black tracking-widest text-[#B5BAC9] flex items-center gap-1">
+                            <MessageSquare className="w-3.5 h-3.5" /> Allie Story Chat
+                          </span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2 text-left custom-scrollbar text-xs animate-fadeIn">
+                          {activeRoom.chat?.map((msg: any, idx: number) => (
+                            <div key={idx} className="space-y-0.5">
+                              <span className={`font-bold ${msg.sender === "System" ? "text-amber-500" : msg.sender === (user?.displayName || user?.email?.split("@")[0]) ? "text-sky-400" : "text-[#D155DC]"}`}>{msg.sender}: </span>
+                              <span className="text-[#ECEEF3] font-sans">{msg.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex border-t border-white/5 p-2 gap-1.5">
+                          <input
+                            type="text"
+                            placeholder="Type message..."
+                            value={chatMessage}
+                            onChange={(e) => setChatMessage(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleSendChatMessage()}
+                            className="flex-1 bg-slate-900 border border-white/10 rounded-lg text-xs leading-relaxed text-white px-3"
+                          />
+                          <button
+                            onClick={handleSendChatMessage}
+                            className="px-3 py-1.5 text-[10px] font-black uppercase bg-amber-500 text-slate-950 hover:bg-amber-600 rounded-lg cursor-pointer"
+                          >
+                            Send
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB: EXPORT */}
+              {creatorTab === "export" && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Compilates Export Suite</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Extract local storyboards, codex grids, character traits, and linear narrative paths. Export as a beautifully styled Markdown document or share interactive pathways publicly.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleExportStory}
+                      className="w-full py-3.5 bg-slate-900 hover:bg-slate-850 border border-white/10 hover:border-white/25 rounded-xl font-bold text-xs uppercase tracking-widest text-[#ECEEF2] flex items-center justify-center gap-2 cursor-pointer transition-all"
+                    >
+                      <Download className="w-4 h-4 text-emerald-400" /> Export Grimoire File (.md)
+                    </button>
+
+                    <div className="pt-2 border-t border-white/5 space-y-3 text-left">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Shareable Interactive Path</span>
+                      <button
+                        onClick={handleShareStory}
+                        disabled={isSharing}
+                        className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs uppercase tracking-widest rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-40"
+                      >
+                        {isSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                        Generate Public Shared Link
+                      </button>
+
+                      {sharedLink && (
+                        <div className="p-3.5 bg-[#090d16] border border-amber-500/20 rounded-xl space-y-2 mt-2">
+                          <p className="text-[10px] text-gray-400">Successfully published! Copy link below:</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={sharedLink}
+                              className="flex-1 bg-slate-950 px-3 py-1.5 border border-white/10 rounded text-[11px] text-amber-400 font-mono font-bold font-sans"
+                            />
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(sharedLink);
+                                alert("Link Copied!");
+                              }}
+                              className="px-3 bg-amber-500/20 text-amber-300 rounded border border-amber-500/20 text-[10px] font-black uppercase cursor-pointer"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </>

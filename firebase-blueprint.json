@@ -78,6 +78,40 @@
         "status": { "type": "string", "description": "Discovery state of the lore element" }
       },
       "required": ["title", "category", "content", "discoveredAt"]
+    },
+    "SharedEcho": {
+      "title": "SharedEcho",
+      "description": "A publicly shared interactive choice tree snapshot from a player's universe",
+      "type": "object",
+      "properties": {
+        "storyId": { "type": "string" },
+        "userId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "genre": { "type": "string" },
+        "characterArchetype": { "type": "string" },
+        "customBasis": { "type": "string" },
+        "stepsSnapshot": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storyId", "userId", "creatorName", "stepsSnapshot", "createdAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "A live, collaborative space for multi-user storytelling and voting",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "hostName": { "type": "string" },
+        "hostId": { "type": "string" },
+        "genre": { "type": "string" },
+        "status": { "type": "string" },
+        "activeStoryId": { "type": "string" },
+        "participants": { "type": "array" },
+        "currentVotes": { "type": "object" },
+        "chat": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "hostId", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -100,6 +134,14 @@
     "users/{userId}/stories/{storyId}/codex/{codexId}": {
       "schema": "CodexEntry",
       "description": "Dynamically updated genre-specific codex elements and lore discovered by the player"
+    },
+    "shared_echoes/{echoId}": {
+      "schema": "SharedEcho",
+      "description": "Publicly shared static snapshot of choices and story pathways"
+    },
+    "rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Real-time collaborative storyteller lobby and sync"
     }
   }
 }
