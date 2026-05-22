@@ -43,15 +43,15 @@ export function VoiceNarratorPanel({
   settings,
   setSettings
 }: VoiceNarratorPanelProps) {
-  // TTS State
+  // Premium and Free Voice States
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("google_assistant");
   const [voiceRate, setVoiceRate] = useState<number>(1.0);
   const [voicePitch, setVoicePitch] = useState<number>(1.0);
   const [autoNarrate, setAutoNarrate] = useState<boolean>(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // Companion Chat State
   const [showCompanion, setShowCompanion] = useState(false);
@@ -60,43 +60,48 @@ export function VoiceNarratorPanel({
   const [isListening, setIsListening] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  const utteranceQueueRef = useRef<SpeechSynthesisUtterance[]>([]);
-  const currentUtteranceIndexRef = useRef<number>(-1);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  // Load browser Speech Synthesis voices
+  // Safe preset premium voice options configured on server
+  const availablePremiumVoices = [
+    { key: "google_assistant", name: "Google Natural Voice (Free, Built-In Server-Side)" },
+    { key: "eleven_rachel", name: "Rachel (ElevenLabs Natural - Silk Feminine)" },
+    { key: "eleven_adam", name: "Adam (ElevenLabs Natural - Deep Masculine)" },
+    { key: "openai_nova", name: "Nova (OpenAI Natural - Saturated Feminine)" },
+    { key: "openai_onyx", name: "Onyx (OpenAI Natural - Dynamic Masculine)" },
+    { key: "openai_alloy", name: "Alloy (OpenAI Natural - Cozy Neutral)" },
+  ];
+
+  // Dynamic Browser OS Voice Loader
   useEffect(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
 
-    const loadVoices = () => {
+    const loadLocalVoices = () => {
       const voices = window.speechSynthesis.getVoices();
-      setSystemVoices(voices);
-      
-      // Auto-select a nice default English voice if available
-      if (voices.length > 0) {
-        const preferred = voices.find(
-          (v) =>
-            v.lang.toLowerCase().includes("en-us") ||
-            v.lang.toLowerCase().includes("en-gb")
-        ) || voices[0];
-        setSelectedVoiceName(preferred.name);
-      }
+      // Prioritize English voices for immersive narrative consistency
+      const englishOnly = voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
+      setBrowserVoices(englishOnly.length > 0 ? englishOnly : voices);
     };
 
-    loadVoices();
+    loadLocalVoices();
     if (window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+      window.speechSynthesis.onvoiceschanged = loadLocalVoices;
     }
+  }, []);
 
+  // Cleanup active streams on component release
+  useEffect(() => {
     return () => {
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
       }
     };
   }, []);
 
-  // Web Speech API: Speech Recognition Setup
+  // Web Speech API: Speech Recognition Setup for Hands-Free Interaction
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SpeechRecognition =
@@ -139,14 +144,14 @@ export function VoiceNarratorPanel({
 
   // Cancel any speech on dynamic scene node changes, then auto narrate if enabled
   useEffect(() => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      setIsPlaying(false);
-      setIsPaused(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
     }
+    setIsPlaying(false);
+    setIsPaused(false);
 
     if (autoNarrate && currentNode?.sceneDescription) {
-      // Small timeout to allow states to settle and typewriter to start
       const t = setTimeout(() => {
         handlePlaySpeech();
       }, 800);
@@ -163,131 +168,152 @@ export function VoiceNarratorPanel({
     if (isListening) {
       recognitionRef.current.stop();
     } else {
-      window.speechSynthesis.cancel(); // Mute narrations when player speaks
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
       setIsPlaying(false);
       recognitionRef.current.start();
     }
   };
 
-  // Split description text into segments of Narration vs Dialogue
-  // Quotes: "...", “...”, etc.
-  const parseSceneSegments = (text: string) => {
-    if (!text) return [];
-    
-    // Regular expression to extract quoted dialogues
-    const regex = /([“"'])(.*?)\1/g;
-    const segments: { type: "narration" | "dialogue"; text: string }[] = [];
-    
-    let lastIndex = 0;
-    let match;
-    
-    while ((match = regex.exec(text)) !== null) {
-      const matchIndex = match.index;
-      // Add preceding narration
-      if (matchIndex > lastIndex) {
-        const narrationText = text.substring(lastIndex, matchIndex).trim();
-        if (narrationText) {
-          segments.push({ type: "narration", text: narrationText });
-        }
-      }
-      
-      // Add dialogue
-      const dialogueText = match[2].trim();
-      if (dialogueText) {
-        segments.push({ type: "dialogue", text: dialogueText });
-      }
-      
-      lastIndex = regex.lastIndex;
-    }
-    
-    // Add remaining text
-    if (lastIndex < text.length) {
-      const remaining = text.substring(lastIndex).trim();
-      if (remaining) {
-        segments.push({ type: "narration", text: remaining });
-      }
-    }
-    
-    return segments.length > 0 ? segments : [{ type: "narration", text }];
-  };
+  const handlePlaySpeech = async () => {
+    if (!currentNode?.sceneDescription) return;
 
-  const handlePlaySpeech = () => {
-    if (!window.speechSynthesis || !currentNode?.sceneDescription) return;
+    if (selectedVoiceName.startsWith("browser_")) {
+      if (typeof window === "undefined" || !window.speechSynthesis) return;
+      if (isPaused) {
+        window.speechSynthesis.resume();
+        setIsPaused(false);
+        setIsPlaying(true);
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const realVoiceName = selectedVoiceName.substring("browser_".length);
+      const voiceObj = browserVoices.find((v) => v.name === realVoiceName);
+      
+      const utterance = new SpeechSynthesisUtterance(currentNode.sceneDescription);
+      if (voiceObj) {
+        utterance.voice = voiceObj;
+      }
+      utterance.rate = voiceRate;
+      utterance.pitch = voicePitch;
+      utterance.onstart = () => {
+        setIsPlaying(true);
+        setIsPaused(false);
+      };
+      utterance.onend = () => {
+        setIsPlaying(false);
+        setIsPaused(false);
+      };
+      utterance.onerror = () => {
+        setIsPlaying(false);
+        setIsPaused(false);
+      };
+      window.speechSynthesis.speak(utterance);
+      return;
+    }
 
-    if (isPaused) {
-      window.speechSynthesis.resume();
+    if (isPaused && audioRef.current) {
+      audioRef.current.play();
       setIsPaused(false);
       setIsPlaying(true);
       return;
     }
 
-    window.speechSynthesis.cancel();
-    utteranceQueueRef.current = [];
-    currentUtteranceIndexRef.current = -1;
+    // Stop current track
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
 
-    const segments = parseSceneSegments(currentNode.sceneDescription);
-    const selectedVoice = systemVoices.find((v) => v.name === selectedVoiceName) || null;
+    setIsPlaying(true);
+    setIsPaused(false);
 
-    segments.forEach((segment, idx) => {
-      const utterance = new SpeechSynthesisUtterance(segment.text);
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-      }
+    try {
+      // Determine voice gender options dynamically
+      const gender = genre === "romance" ? "female" : "neutral";
+      const voiceParam = selectedVoiceName;
+      const url = `/api/story/tts?text=${encodeURIComponent(currentNode.sceneDescription)}&gender=${gender}&voice=${voiceParam}`;
+      
+      const audio = new Audio(url);
+      audioRef.current = audio;
 
-      // Tailor speaking profiles dynamically!
-      if (segment.type === "dialogue") {
-        // Dialogue: Character voice has a distinct higher/lower pitch and speech rate!
-        utterance.pitch = genre === "romance" ? voicePitch * 1.15 : voicePitch * 0.85;
-        utterance.rate = voiceRate * 0.95;
-      } else {
-        // Narration: Chosen voice profiles
-        utterance.pitch = voicePitch;
-        utterance.rate = voiceRate;
-      }
+      // Adjust speed on the elements
+      audio.playbackRate = voiceRate;
 
-      utterance.onstart = () => {
-        currentUtteranceIndexRef.current = idx;
-        setIsPlaying(true);
+      audio.onended = () => {
+        setIsPlaying(false);
         setIsPaused(false);
       };
 
-      utterance.onend = () => {
-        if (idx === segments.length - 1) {
+      audio.onerror = (err) => {
+        console.warn("Server tts error, falling back to local SpeechSynthesis:", err);
+        // Clean fallback to browser synthesis if audio blocks
+        const fallbackUtteranceName = selectedVoiceName.startsWith("browser_") 
+          ? selectedVoiceName.substring("browser_".length) 
+          : "";
+        if (typeof window !== "undefined" && window.speechSynthesis) {
+          const utterance = new SpeechSynthesisUtterance(currentNode.sceneDescription);
+          if (fallbackUtteranceName) {
+            const voiceObj = browserVoices.find(v => v.name === fallbackUtteranceName);
+            if (voiceObj) utterance.voice = voiceObj;
+          }
+          utterance.rate = voiceRate;
+          utterance.pitch = voicePitch;
+          utterance.onend = () => {
+             setIsPlaying(false);
+             setIsPaused(false);
+          };
+          window.speechSynthesis.speak(utterance);
+        } else {
           setIsPlaying(false);
           setIsPaused(false);
         }
       };
 
-      utterance.onerror = () => {
-        if (idx === segments.length - 1) {
-          setIsPlaying(false);
-          setIsPaused(false);
-        }
-      };
-
-      utteranceQueueRef.current.push(utterance);
-    });
-
-    // Play first utterance
-    if (utteranceQueueRef.current.length > 0) {
-      utteranceQueueRef.current.forEach((utt) => window.speechSynthesis.speak(utt));
+      await audio.play();
+    } catch (err) {
+      console.error("[TTS Play failure]:", err);
+      setIsPlaying(false);
+      setIsPaused(false);
     }
   };
 
   const handlePauseSpeech = () => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.pause();
+    if (selectedVoiceName.startsWith("browser_")) {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.pause();
+        setIsPaused(true);
+        setIsPlaying(false);
+      }
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
       setIsPaused(true);
       setIsPlaying(false);
     }
   };
 
   const handleStopSpeech = () => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (selectedVoiceName.startsWith("browser_")) {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
       setIsPaused(false);
       setIsPlaying(false);
+      return;
     }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    // Also cancel standard window synthesis if it ever fired as fallback
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPaused(false);
+    setIsPlaying(false);
   };
 
   // Send Companion Message (Speech or Text) to Story AI
@@ -334,23 +360,41 @@ export function VoiceNarratorPanel({
       setChatMessages((prev) => [...prev, aiMsgObj]);
 
       // Automatically speak the companion reply!
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-        const activeVoice = systemVoices.find((v) => v.name === selectedVoiceName) || null;
-        const utterance = new SpeechSynthesisUtterance(aiMsgObj.text);
-        if (activeVoice) {
-          utterance.voice = activeVoice;
-        }
-        
-        // Give character speakers different default pitches as well
-        if (aiMsgObj.sender !== "Narrator") {
-          utterance.pitch = voicePitch * 1.1;
-          utterance.rate = voiceRate * 1.05;
-        } else {
-          utterance.pitch = voicePitch;
+      if (selectedVoiceName.startsWith("browser_")) {
+        if (typeof window !== "undefined" && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+          const realVoiceName = selectedVoiceName.substring("browser_".length);
+          const voiceObj = browserVoices.find((v) => v.name === realVoiceName);
+          const utterance = new SpeechSynthesisUtterance(aiMsgObj.text);
+          if (voiceObj) {
+            utterance.voice = voiceObj;
+          }
           utterance.rate = voiceRate;
+          utterance.pitch = voicePitch;
+          window.speechSynthesis.speak(utterance);
         }
-        window.speechSynthesis.speak(utterance);
+      } else {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+
+        const gender = aiMsgObj.sender !== "Narrator" ? "female" : "neutral";
+        const companionTtsUrl = `/api/story/tts?text=${encodeURIComponent(aiMsgObj.text)}&gender=${gender}&voice=${selectedVoiceName}`;
+        
+        const audio = new Audio(companionTtsUrl);
+        audioRef.current = audio;
+        audio.playbackRate = voiceRate;
+
+        audio.play().catch((e) => {
+          console.warn("Companion voice autoplay error (usually gesture locked):", e);
+          // Fallback to local browser speech output
+          if (typeof window !== "undefined" && window.speechSynthesis) {
+            const utterance = new SpeechSynthesisUtterance(aiMsgObj.text);
+            utterance.rate = voiceRate;
+            window.speechSynthesis.speak(utterance);
+          }
+        });
       }
     } catch (error) {
       console.error("Companion chat error:", error);
@@ -536,23 +580,36 @@ export function VoiceNarratorPanel({
                 <select
                   value={selectedVoiceName}
                   onChange={(e) => setSelectedVoiceName(e.target.value)}
-                  className="w-full bg-black/40 border border-current/10 rounded-xl px-3.5 py-2.5 text-xs text-current font-medium focus:none"
+                  className="w-full bg-black/45 border border-current/15 rounded-xl px-3.5 py-2.5 text-xs text-current font-medium focus:ring-1 focus:ring-current/20 focus:outline-none"
                 >
-                  <option value="" disabled className="text-zinc-600 bg-zinc-950">
-                    -- System Voices --
-                  </option>
-                  {systemVoices.map((voice) => (
-                    <option
-                      key={voice.name}
-                      value={voice.name}
-                      className="text-zinc-300 bg-zinc-900"
-                    >
-                      {voice.name} ({voice.lang})
-                    </option>
-                  ))}
+                  <optgroup label="Server-Side Built-In & Premium" className="text-zinc-400 bg-zinc-950 font-bold">
+                    {availablePremiumVoices.map((voice) => (
+                      <option
+                        key={voice.key}
+                        value={voice.key}
+                        className="text-zinc-200 bg-zinc-900 font-sans"
+                      >
+                        {voice.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  
+                  {browserVoices.length > 0 && (
+                    <optgroup label="Local Browser OS Voices (100% Free & Unlimited)" className="text-zinc-400 bg-zinc-950 font-bold">
+                      {browserVoices.map((voice) => (
+                        <option
+                          key={voice.name}
+                          value={`browser_${voice.name}`}
+                          className="text-zinc-200 bg-zinc-900 font-sans"
+                        >
+                          Native: {voice.name} ({voice.lang})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <span className="text-[10px] font-mono opacity-50 block leading-normal">
-                  Your local browser OS hosts these voices. Choosing native male/female guides changes tones.
+                  💡 <b>No Setup Required</b> for Google Built-In or Local Browser voices! They are completely free and unlimited. To enable ElevenLabs or OpenAI premium voices, paste your API keys in the app settings sidebar.
                 </span>
               </div>
 

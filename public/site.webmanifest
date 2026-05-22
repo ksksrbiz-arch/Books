@@ -1,0 +1,36 @@
+{
+  "name": "TBR Storyboard | Echoes of Choice",
+  "short_name": "TBR Storyboard",
+  "description": "An interactive choice-driven narrative and immersive world simulator. A creative reading companion of To Be Read (TBR) Clackamas Book Exchange.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1019",
+  "theme_color": "#fbfaf7",
+  "icons": [
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

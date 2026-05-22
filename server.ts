@@ -338,6 +338,39 @@ async function callGeminiWithRetry<T>(fn: () => Promise<T>, maxRetries = 3, init
 }
 
 /**
+ * Call Gemini with automatic model fallback if quota is exceeded
+ */
+async function generateContentWithFallback(params: {
+  contents: any;
+  config: any;
+  primaryModel?: string;
+  fallbackModel?: string;
+}) {
+  const primaryModel = params.primaryModel || "gemini-3.1-pro-preview";
+  const fallbackModel = params.fallbackModel || "gemini-3.5-flash";
+  
+  try {
+    return await callGeminiWithRetry(() => getAI().models.generateContent({
+      model: primaryModel,
+      contents: params.contents,
+      config: params.config
+    }));
+  } catch (error: any) {
+    const errorStr = (error?.message || "").toLowerCase();
+    const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || error?.status === 429 || errorStr.includes("resource_exhausted") || errorStr.includes("limit");
+    if (isQuotaError && primaryModel !== fallbackModel) {
+      console.warn(`[GEMINI FALLBACK] Primary model ${primaryModel} failed with quota/rate limits. Automatically falling back to standard-free model ${fallbackModel}...`);
+      return await callGeminiWithRetry(() => getAI().models.generateContent({
+        model: fallbackModel,
+        contents: params.contents,
+        config: params.config
+      }));
+    }
+    throw error;
+  }
+}
+
+/**
  * Story Generation Node Structure
  */
 const StoryNodeSchema = {
@@ -554,15 +587,16 @@ app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
   `;
 
   try {
-    const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: "gemini-3.1-pro-preview",
+    const response = await generateContentWithFallback({
+      primaryModel: "gemini-3.1-pro-preview",
+      fallbackModel: "gemini-3.5-flash",
       contents: prompt,
       config: {
         temperature: 0.9,
         responseMimeType: "application/json",
         responseSchema: PremiseSchema
       }
-    }));
+    });
     const data = JSON.parse(response.text!);
     apiCache.set(cacheKey, data);
     res.json(data);
@@ -590,6 +624,137 @@ app.get("/api/proxy-audio", async (req, res) => {
   } catch (error) {
     console.error("Audio proxy error:", error);
     res.status(500).send("Proxy error");
+  }
+});
+
+// High-Fidelity Human-Like Text-to-Speech API (ElevenLabs + OpenAI TTS + Google Parallel Chunk Fallback)
+app.get("/api/story/tts", rateLimitingMiddleware, async (req, res) => {
+  const text = req.query.text as string;
+  if (!text) {
+    return res.status(400).send("No text provided");
+  }
+
+  const gender = (req.query.gender as string) || "neutral";
+  const voice = (req.query.voice as string) || "google_assistant";
+
+  try {
+    // 1. ELEVENLABS PRESETS (If requested and API Key is active)
+    if (voice.startsWith("eleven_") && process.env.ELEVENLABS_API_KEY) {
+      console.log("[TTS] Utilizing ElevenLabs dynamic narration engine for voice:", voice);
+      // Map keys to premium voice IDs
+      let voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel premium default voice
+      if (voice === "eleven_adam") {
+        voiceId = "pNInz6obpgmev04fUC7t"; // Adam deep masculine voice
+      }
+      
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "xi-api-key": process.env.ELEVENLABS_API_KEY,
+        },
+        body: JSON.stringify({
+          text: text,
+          model_id: "eleven_monolingual_v1",
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        const arrayBuffer = await response.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
+      }
+      console.warn("[TTS] ElevenLabs endpoint failed, falling back to free Google engine...", response.statusText);
+    }
+
+    // 2. OPENAI PRESETS (If requested and API Key is active)
+    if (voice.startsWith("openai_") && process.env.OPENAI_API_KEY) {
+      console.log("[TTS] Utilizing OpenAI speech synthesis engine for voice:", voice);
+      let voiceOption = "alloy";
+      if (voice === "openai_nova") voiceOption = "nova";
+      else if (voice === "openai_onyx") voiceOption = "onyx";
+      
+      const response = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "tts-1",
+          input: text,
+          voice: voiceOption,
+        }),
+      });
+
+      if (response.ok) {
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        const arrayBuffer = await response.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
+      }
+      console.warn("[TTS] OpenAI TTS endpoint failed, falling back to free Google engine...", response.statusText);
+    }
+
+    // 3. SECURE HIGH-DENSITY GOOGLE TRANSLATE PARALLEL CHUNK ENGINE (Zero Setup Required - 100% Free)
+    console.log("[TTS] Utilizing free parallel chunked Google speech assistant stream...");
+    // Split text gracefully into small chunks to avoid Google's 200 character ceiling
+    const sentences = text
+      .replace(/([.?!;])\s+/g, "$1|")
+      .split("|")
+      .filter((s) => s.trim().length > 0);
+
+    const chunkMax = 160;
+    const textChunks: string[] = [];
+    let currentChunk = "";
+
+    for (const sentence of sentences) {
+      if ((currentChunk + " " + sentence).trim().length <= chunkMax) {
+        currentChunk = (currentChunk + " " + sentence).trim();
+      } else {
+        if (currentChunk) textChunks.push(currentChunk);
+        let temp = sentence;
+        while (temp.length > chunkMax) {
+          textChunks.push(temp.substring(0, chunkMax));
+          temp = temp.substring(chunkMax);
+        }
+        currentChunk = temp;
+      }
+    }
+    if (currentChunk) {
+      textChunks.push(currentChunk);
+    }
+
+    // Parallel loading loop for zero latency execution
+    const chunkPromises = textChunks.map(async (chunk) => {
+      const gTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+      const response = await fetch(gTtsUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36",
+          "Referer": "https://translate.google.com/"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Google Translate source stream exception: ${response.status}`);
+      }
+      return Buffer.from(await response.arrayBuffer());
+    });
+
+    const buffers = await Promise.all(chunkPromises);
+    const unifiedBuffer = Buffer.concat(buffers);
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400");
+    res.send(unifiedBuffer);
+
+  } catch (error: any) {
+    console.error("[TTS Engine Exception]:", error);
+    res.status(500).json({ error: "Failed to generate dynamic natural voice stream.", explanation: error.message });
   }
 });
 
@@ -646,8 +811,9 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
   `;
 
   try {
-    const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: "gemini-3.1-pro-preview",
+    const response = await generateContentWithFallback({
+      primaryModel: "gemini-3.1-pro-preview",
+      fallbackModel: "gemini-3.5-flash",
       contents: "Start the first scene of the adventure.",
       config: {
         systemInstruction,
@@ -655,7 +821,7 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
         responseMimeType: "application/json",
         responseSchema: StoryNodeSchema
       }
-    }));
+    });
 
     const data = JSON.parse(response.text!);
     apiCache.set(cacheKey, data);
@@ -756,8 +922,9 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
   `;
 
   try {
-    const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: "gemini-3.1-pro-preview",
+    const response = await generateContentWithFallback({
+      primaryModel: "gemini-3.1-pro-preview",
+      fallbackModel: "gemini-3.5-flash",
       contents: prompt,
       config: {
         systemInstruction,
@@ -765,7 +932,7 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
         responseMimeType: "application/json",
         responseSchema: StoryNodeSchema
       }
-    }));
+    });
 
     const data = JSON.parse(response.text!);
     apiCache.set(cacheKey, data);
@@ -1328,8 +1495,9 @@ app.post("/api/story/converse", rateLimitingMiddleware, async (req, res) => {
       Generate the reaction.
     `;
 
-    const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: "gemini-3.1-pro-preview",
+    const response = await generateContentWithFallback({
+      primaryModel: "gemini-3.1-pro-preview",
+      fallbackModel: "gemini-3.5-flash",
       contents: prompt,
       config: {
         systemInstruction,
@@ -1337,7 +1505,7 @@ app.post("/api/story/converse", rateLimitingMiddleware, async (req, res) => {
         responseMimeType: "application/json",
         responseSchema: CompanionConverseSchema
       }
-    }));
+    });
 
     const responseText = response.text;
     if (!responseText) {

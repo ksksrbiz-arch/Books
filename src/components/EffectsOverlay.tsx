@@ -135,7 +135,7 @@ export function EffectsOverlay({ genre, intensity, isEnding }: EffectsOverlayPro
       });
 
       // Add film grain if crime
-      if (genre === 'crime') {
+      if (genre === 'crime' && canvas.width > 0 && canvas.height > 0) {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
         // if ending, less intense noise, maybe more desaturated

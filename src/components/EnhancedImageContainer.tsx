@@ -246,6 +246,19 @@ export function EnhancedImageContainer({
         )}
       </AnimatePresence>
 
+      {/* Quota Fallback Informative Banner */}
+      {imageUrl?.includes("picsum.photos") && (
+        <div className="absolute bottom-4 right-4 z-40 max-w-[280px] bg-amber-500/10 bg-black/60 backdrop-blur-md border border-amber-500/20 text-amber-200 p-2.5 rounded-xl text-[9px] font-sans flex items-start gap-2 shadow-lg">
+          <Info className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+          <div className="space-y-0.5">
+            <span className="font-bold uppercase tracking-wider block text-amber-300">Image Quota Standby</span>
+            <span className="opacity-80 leading-normal block text-xs">
+              Gemini free-tier request limit reached. Displaying stable aesthetic placeholder art instead of failing. Use settings to update credentials for limitless imagery.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 3. Aesthetic Interactive Control Buttons */}
       <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
         {/* Toggle Telemetry HUD */}

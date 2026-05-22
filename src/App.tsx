@@ -44,6 +44,8 @@ import {
   Check,
   ExternalLink,
   Lock,
+  Bookmark,
+  Trash,
 } from "lucide-react";
 import {
   auth,
@@ -337,6 +339,68 @@ function App() {
   const [isJoiningRoom, setIsJoiningRoom] = useState(false);
 
   const [sharedEchoSnapshot, setSharedEchoSnapshot] = useState<any | null>(null);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [bookmarks, setBookmarks] = useState<any[]>([]);
+
+  // Load Individual Bookmarks
+  useEffect(() => {
+    if (currentStoryId) {
+      const storedBookmarks = localStorage.getItem(`echoes_bookmarks_${currentStoryId}`);
+      if (storedBookmarks) {
+        try {
+          setBookmarks(JSON.parse(storedBookmarks));
+        } catch (e) {
+          console.error("Failed to parse saved bookmarks", e);
+          setBookmarks([]);
+        }
+      } else {
+        setBookmarks([]);
+      }
+    } else {
+      setBookmarks([]);
+    }
+  }, [currentStoryId]);
+
+  const saveBookmarksToStorage = (updatedList: any[]) => {
+    if (currentStoryId) {
+      localStorage.setItem(`echoes_bookmarks_${currentStoryId}`, JSON.stringify(updatedList));
+      setBookmarks(updatedList);
+    }
+  };
+
+  // Toggle current active step bookmark
+  const handleToggleCurrentBookmark = () => {
+    if (!currentNode || !currentStoryId || allSteps.length === 0) return;
+    
+    const activeIndex = allSteps.length - 1;
+    const isAlreadyBookmarked = bookmarks.some((b: any) => b.stepIndex === activeIndex);
+
+    if (isAlreadyBookmarked) {
+      const updated = bookmarks.filter((b: any) => b.stepIndex !== activeIndex);
+      saveBookmarksToStorage(updated);
+    } else {
+      const targetStep = allSteps[activeIndex];
+      const newBookmark = {
+        id: `bookmark_${Date.now()}`,
+        stepIndex: activeIndex,
+        sceneTitle: targetStep.sceneTitle,
+        playerNote: `Scene ${activeIndex + 1} - ${targetStep.sceneTitle}`,
+        timestamp: Date.now(),
+        stepsSnapshot: JSON.parse(JSON.stringify(allSteps)),
+        relationshipsSnapshot: JSON.parse(JSON.stringify(relationships)),
+        consequencesSnapshot: JSON.parse(JSON.stringify(consequences)),
+        storyMilestonesSnapshot: JSON.parse(JSON.stringify(storyMilestones)),
+      };
+      const updated = [newBookmark, ...bookmarks];
+      saveBookmarksToStorage(updated);
+    }
+  };
+
+  const handleClearAllBookmarks = () => {
+    if (window.confirm("Are you sure you want to clear all bookmarks in this story?")) {
+      saveBookmarksToStorage([]);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -2790,11 +2854,27 @@ function App() {
               }`}
             />
           </div>
-          <span
-            className={`text-xl font-black tracking-tighter transition-colors duration-700 ${genre === "romance" ? "text-rose-900" : "text-white"}`}
+          <div className="flex flex-col">
+            <span
+              className={`text-xl font-black tracking-tighter transition-colors duration-700 ${genre === "romance" ? "text-rose-900" : "text-white"}`}
+            >
+              Echoes
+            </span>
+            <span className={`text-[8px] font-bold tracking-widest uppercase transition-colors duration-700 ${genre === "romance" ? "text-rose-700" : "text-amber-400"}`}>
+              By To Be Read
+            </span>
+          </div>
+          <span className="hidden sm:inline-block h-6 w-[1px] bg-white/10 mx-2" />
+          <a
+            href="https://to-be-read-clackamas.netlify.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`hidden sm:flex items-center gap-1.5 px-3 py-1 hover:scale-102 rounded-full border border-amber-500/20 bg-amber-500/5 text-[10px] font-bold uppercase tracking-wider hover:bg-amber-500/10 hover:border-amber-500/40 transition-all font-sans cursor-pointer ${genre === "romance" ? "text-rose-800 border-rose-300 bg-rose-50 hover:bg-rose-100" : "text-amber-400"}`}
+            title="Return to Clackamas Bookstore"
           >
-            Echoes
-          </span>
+            <span>Back to Bookstore</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
         </div>
         
         {/* Responsive Header Controls */}
@@ -2917,6 +2997,26 @@ function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-70"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-current"></span>
                   </span>
+                </button>
+              )}
+              {currentStoryId && (
+                <button
+                  onClick={() => setShowBookmarks(!showBookmarks)}
+                  className={`p-2 rounded-full transition-colors relative cursor-pointer ${
+                    showBookmarks
+                      ? "text-amber-400 bg-amber-500/20 border border-amber-500/30"
+                      : genre === "romance"
+                      ? "text-rose-400 hover:bg-rose-50"
+                      : "text-gray-400 hover:bg-white/5"
+                  }`}
+                  title="Story Bookmarks"
+                >
+                  <Bookmark className="w-4 h-4" />
+                  {bookmarks.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                    </span>
+                  )}
                 </button>
               )}
               {currentStoryId && (
@@ -3148,6 +3248,26 @@ function App() {
                   </button>
                 )}
 
+                {currentStoryId && (
+                  <button
+                    onClick={() => {
+                      setShowBookmarks(!showBookmarks);
+                      setShowMobileMenu(false);
+                    }}
+                    className={`w-full py-4 px-6 rounded-2xl flex items-center justify-between font-bold text-xs uppercase tracking-wider text-left border ${
+                      showBookmarks
+                        ? "bg-amber-500/10 border-amber-400/50 text-amber-500 dark:text-amber-400"
+                        : genre === "romance" ? "bg-rose-50/50 border-rose-100/70" : "bg-white/5 border-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center gap-4">
+                      <Bookmark className="w-5 h-5 text-amber-500 shrink-0" />
+                      <span>Story Bookmarks</span>
+                    </span>
+                    <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     setShowSettings(true);
@@ -3312,20 +3432,34 @@ function App() {
               <div className="space-y-6">
                 <h2 className="text-5xl font-serif font-medium tracking-tight text-white leading-none">
                   Welcome to <br />
-                  <span className="italic text-white/60">Architect</span>
+                  <span className="italic text-amber-400 font-serif">TBR Storyboard</span>
                 </h2>
                 <p className="text-white/40 max-w-sm mx-auto font-light tracking-wide text-sm leading-relaxed">
-                  To weave your fate through the ethereal seas, we must anchor
-                  your identity.
+                  Step in to weave your fate through choice-driven narrative timelines.
+                  A creative companion suite of To Be Read (TBR) Clackamas Book Exchange.
                 </p>
               </div>
-              <button
-                onClick={login}
-                className="flex items-center gap-3 bg-white text-black px-10 py-4 rounded-full font-medium uppercase tracking-[0.2em] shadow-xl shadow-white/5 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs mt-4"
-              >
-                <LogIn className="w-4 h-4" />
-                Login with Google
-              </button>
+              <div className="flex flex-col items-center gap-6">
+                <button
+                  onClick={login}
+                  className="flex items-center gap-3 bg-white text-black px-10 py-4 rounded-full font-medium uppercase tracking-[0.2em] shadow-xl shadow-white/5 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Login with Google
+                </button>
+                <div className="pt-6 border-t border-white/5 w-full flex flex-col items-center gap-1">
+                  <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest">A Scholarly Companion Project</span>
+                  <a
+                    href="https://to-be-read-clackamas.netlify.app/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-amber-500/70 hover:text-amber-400 font-bold transition-all hover:underline cursor-pointer"
+                  >
+                    <span>Visit Clackamas Bookstore</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
               {error && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm max-w-sm mt-4">
                   {error}
@@ -4223,17 +4357,32 @@ function App() {
                             <span
                               className={`h-[1px] flex-1 ${genre === "romance" ? "bg-rose-100" : genre === "paranormal" ? "bg-purple-900/30" : "bg-white/5"}`}
                             />
-                            <span
-                              className={`text-[10px] uppercase tracking-[0.4em] font-black px-3 py-1 rounded-full ${
-                                genre === "romance"
-                                  ? "text-rose-400 bg-rose-50"
-                                  : genre === "paranormal"
-                                    ? "text-purple-400 bg-purple-900/20"
-                                    : "text-gray-500 bg-white/5"
-                              }`}
-                            >
-                              Entry {history.length + 1}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-[10px] uppercase tracking-[0.4em] font-black px-3 py-1 rounded-full ${
+                                  genre === "romance"
+                                    ? "text-rose-400 bg-rose-50"
+                                    : genre === "paranormal"
+                                      ? "text-purple-400 bg-purple-900/20"
+                                      : "text-gray-500 bg-white/5"
+                                }`}
+                              >
+                                Entry {history.length + 1}
+                              </span>
+                              {currentNode && (
+                                <button
+                                  onClick={handleToggleCurrentBookmark}
+                                  className={`p-1.5 rounded-full border transition-all cursor-pointer ${
+                                    bookmarks.some((b: any) => b.stepIndex === allSteps.length - 1)
+                                      ? "bg-amber-500/20 border-amber-500/40 text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)] scale-110"
+                                      : "bg-white/5 border-white/10 text-gray-500 hover:text-gray-300"
+                                  }`}
+                                  title={bookmarks.some((b: any) => b.stepIndex === allSteps.length - 1) ? "Remove Bookmark" : "Bookmark this Scene"}
+                                >
+                                  <Bookmark className={`w-3.5 h-3.5 ${bookmarks.some((b: any) => b.stepIndex === allSteps.length - 1) ? "fill-amber-400 text-amber-400" : ""}`} />
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <h2
                             className={`text-5xl md:text-8xl leading-[0.85] transition-all duration-1000 ${headingFont} ${
@@ -5095,6 +5244,123 @@ function App() {
                 </div>
               )}
 
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Bookmarks Controller Panel Overlay */}
+      {showBookmarks && (
+        <>
+          <div
+            onClick={() => setShowBookmarks(false)}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[92]"
+          />
+          <div
+            className="fixed top-0 right-0 h-full w-full max-w-lg z-[93] shadow-2xl border-l flex flex-col bg-slate-950 border-amber-500/10 text-gray-200"
+          >
+            <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#070b12]">
+              <div className="flex items-center gap-3">
+                <Bookmark className="w-5 h-5 text-amber-400 animate-pulse" />
+                <div>
+                  <h3 className="font-extrabold text-[#ECEEF2] text-sm tracking-widest uppercase">
+                    Story Bookmarks
+                  </h3>
+                  <p className="text-[9px] text-amber-500/80 font-black tracking-widest uppercase">Your Anchored Destinies</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBookmarks(false)}
+                className="p-2 hover:bg-white/5 rounded-full transition-colors text-gray-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[#050811]">
+              <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2 text-left">
+                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest flex items-center justify-between">
+                  <span>Saved Scene Anchors</span>
+                  {bookmarks.length > 0 && (
+                    <button
+                      onClick={handleClearAllBookmarks}
+                      className="text-[9px] font-black uppercase text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </h4>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  Click on any bookmark to immediately restore the story state back to that scene node and explore a brand new fork of fate. This functions like a timeline save point.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {bookmarks.length === 0 ? (
+                  <div className="text-center italic opacity-40 py-12 text-xs flex flex-col items-center justify-center gap-3">
+                    <Bookmark className="w-8 h-8 opacity-20" />
+                    <span className="max-w-xs text-balance">No bookmarked scenes in this session yet. Click the bookmark icon beside "Entry" label on the active scene to pin your favorite scenes!</span>
+                  </div>
+                ) : (
+                  bookmarks.map((b) => (
+                    <div
+                      key={b.id}
+                      className="p-4 rounded-xl border border-white/5 bg-slate-900/60 hover:border-amber-500/30 hover:bg-slate-950/80 transition-all text-left flex items-start gap-4 group relative"
+                    >
+                      <button
+                        onClick={() => {
+                          branchToStep(b.stepIndex);
+                          setShowBookmarks(false);
+                        }}
+                        className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex flex-col items-center justify-center text-[10px] font-black shrink-0 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer"
+                      >
+                        <span>#</span>
+                        <span>{b.stepIndex + 1}</span>
+                      </button>
+                      <div className="flex-1 space-y-1 overflow-hidden pr-16 select-none">
+                        <h5
+                          onClick={() => {
+                            branchToStep(b.stepIndex);
+                            setShowBookmarks(false);
+                          }}
+                          className="text-xs font-bold text-gray-200 uppercase group-hover:text-amber-400 transition-colors cursor-pointer line-clamp-1"
+                        >
+                          {b.sceneTitle}
+                        </h5>
+                        <p className="text-[10px] text-gray-400 leading-relaxed italic line-clamp-1">
+                          {b.playerNote}
+                        </p>
+                        <p className="text-[9px] text-gray-500 font-mono font-bold uppercase pt-1">
+                          Pinned: {new Date(b.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            branchToStep(b.stepIndex);
+                            setShowBookmarks(false);
+                          }}
+                          className="p-2 text-sky-400 hover:bg-sky-500/10 rounded-full transition-colors cursor-pointer"
+                          title="Restore and Jump to Scene"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const updated = bookmarks.filter((bm) => bm.id !== b.id);
+                            saveBookmarksToStorage(updated);
+                          }}
+                          className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-full transition-colors cursor-pointer"
+                          title="Delete Bookmark"
+                        >
+                          <Trash className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </>
