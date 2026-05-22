@@ -440,9 +440,20 @@ const StoryNodeSchema = {
     endingType: {
       type: Type.STRING,
       description: "If isEnding is true, the title/archetype of the ending achieved (e.g., 'Justice Served', 'Heartbreak')."
+    },
+    echoes: {
+      type: Type.OBJECT,
+      description: "Details of short-term, medium-term, and long-term ripples or echoes from this choice.",
+      properties: {
+        shortTermEcho: { type: Type.STRING, description: "The immediate visual or physical reaction occurring right now." },
+        mediumTermEcho: { type: Type.STRING, description: "The echoing consequence that will play out within the next scene or two." },
+        longTermEcho: { type: Type.STRING, description: "A permanent story anchor or paradigm shift that alters the final epilogue criteria." },
+        fateComplexityScore: { type: Type.NUMBER, description: "Calculated complexity index of this narrative leap from 10 to 100." }
+      },
+      required: ["shortTermEcho", "mediumTermEcho", "longTermEcho", "fateComplexityScore"]
     }
   },
-  required: ["sceneTitle", "sceneDescription", "imagePrompt", "mediaType", "choices", "mood", "intensity", "isEnding"]
+  required: ["sceneTitle", "sceneDescription", "imagePrompt", "mediaType", "choices", "mood", "intensity", "isEnding", "echoes"]
 };
 
 const PremiseSchema = {
@@ -542,6 +553,12 @@ function generateProceduralFallback(params: {
     milestonesAchieved: [],
     isEnding: params.isEnding || false,
     endingType: params.isEnding ? "Silent Resolve" : undefined,
+    echoes: {
+      shortTermEcho: "A quiet, immediate physical tremor shifting local variables.",
+      mediumTermEcho: "An ambient consequence that will reveal itself as you move deeper.",
+      longTermEcho: "A structural anchor that permanently locks a minor trajectory path.",
+      fateComplexityScore: 35
+    },
     isProceduralFallback: true // Flag to communicate fail-safe state to UI
   };
 }
@@ -859,8 +876,27 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
 });
 
 app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
-  const { history, choice, genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis, relationships, storyMilestones, consequences, isFinalChoice, customTwist } = req.body;
+  const { 
+    history, 
+    choice, 
+    genre, 
+    storyLength, 
+    characterArchetype, 
+    backstory, 
+    plotComplexity, 
+    tone, 
+    isAdultContent, 
+    customBasis, 
+    relationships, 
+    storyMilestones, 
+    consequences, 
+    isFinalChoice, 
+    customTwist,
+    simulationMode,      // "light" | "standard" | "deep"
+    isWhatIfMode         // Alternate experimental timeline boolean
+  } = req.body;
   
+  const mode = simulationMode || "standard";
   const cacheKey = getCacheKey("continue", req.body);
   const cached = apiCache.get(cacheKey);
   if (cached) {
@@ -868,8 +904,16 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     return res.json(cached);
   }
 
+  // Optimize history depth based on selected Fate Simulation Mode (Cost & Context bounds)
+  let historySlice = history;
+  if (mode === "light") {
+    historySlice = history.slice(-1); // Only pass absolute last scene for extreme speed/cost reduction
+  } else if (mode === "standard") {
+    historySlice = history.slice(-3); // Balance context window perfectly
+  } // "deep" retains full history slice
+
   const systemInstruction = `
-    You are an elite master storyteller and narrative designer. Continue the interactive story based on the user's choice and the established history.
+    You are the Destiny Chronicle Engine, an elite master storyteller and narrative designer. Continue the interactive story based on the user's choice, active parameters, and historical choices.
     ${isAdultContent ? 'This is a strictly 18+ story. Maintain the explicit, raw, and high-intensity adult themes as established.' : 'Keep the story sophisticated and evocative without crossing into explicit adult territory.'}
     
     GENRE: ${genre}
@@ -878,6 +922,7 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     BACKSTORY: ${backstory || 'To be discovered'}
     PLOT COMPLEXITY: ${plotComplexity || 'complex'}
     TONE: ${tone || 'intense'}
+    SIMULATION MODE: ${mode.toUpperCase()} (Process with appropriate depth and analytical detail)
     ${customBasis ? `ORIGINAL BASIS: ${customBasis}` : ''}
     
     RELATIONSHIPS DIRECTIVES (if applicable):
@@ -888,11 +933,18 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     
     MILESTONES TRACKING:
     - Current achieved milestones: ${JSON.stringify(storyMilestones || [])}
-    - If the user achieves a new milestone (e.g., finding the murder weapon, kissing the love interest), include it in "milestonesAchieved".
+    - If the user achieves a new milestone, include it in "milestonesAchieved".
     
     CONSEQUENCES TRACKING:
     - Current long-term consequences of player choices: ${JSON.stringify(consequences || {})}
-    - Analyze the player's choice. If it has long-term repercussions (e.g., leaving a witness alive, making a controversial deal), return new consequences in the "newConsequences" mapping.
+    - Analyze the player's choice. If it has long-term repercussions, return new consequences in the "newConsequences" mapping.
+
+    ${isWhatIfMode ? `
+    ⚠️ alternate timeline / "WHAT IF" MODE DETECTED:
+    - The player is running an alternate experimental reality simulation!
+    - Craft wilder, highly dramatic or experimental branch alternatives.
+    - In your "echoes" object, highlight the speculative nature of this alternate route.
+    ` : ''}
     
     ${isFinalChoice ? `
     FINAL CHOICE & EPILOGUE DIRECTIVES:
@@ -918,13 +970,14 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     6. FREEFORM INPUTS: If the user provides a custom action instead of a preset choice, interpret their intent creatively.
     
     JSON STRUCTURE REQUIREMENTS:
-    - Return the exact same JSON format as the start.
+    - Returned structure MUST strictly match StoryNodeSchema.
     - sceneDescription: 3-4 paragraphs of dense, literary prose.
-    - imagePrompt: Art-house cinematic quality. Specify lighting (chiaroscuro, neon-drenched, ethereal), lens (anamorphic, macro), and mood. This prompt must be safe, symbolic, and avoid direct references to gore, extreme violence, open wounds, exposed weapons, blood, nudity, or explicit sexual acts to bypass filters. Translate violent or intimate acts into evocative atmospheric descriptions (e.g. moody shadows, high-contrast lighting, environmental elements, or intense expressions).
+    - imagePrompt: Art-house cinematic quality. Specify lighting (chiaroscuro, neon-drenched, ethereal), lens (anamorphic, macro), and mood. This prompt must be safe, symbolic, and avoid direct references to gore, extreme violence, open wounds, exposed weapons, blood, nudity, or explicit sexual acts to bypass filters. Translate violent or intimate acts into evocative atmospheric descriptions.
     - choices: 2-3 significant paths forward (${isFinalChoice ? "leave array empty since it's the end" : "unless it is the end, then 0"}).
+    - echoes: Generate highly robust, granular short, medium, and long-term consequences that detail how this specific choice ripples outwards. Assign an appropriate fate Complexity score from 10 to 100 based on the simulation depth!
   `;
 
-  const conversationHistory = history.map((node: any) => `Scene: ${node.sceneDescription}\nChoice taken: ${node.choiceTaken}`).join("\n---\n");
+  const conversationHistory = historySlice.map((node: any) => `Scene: ${node.sceneDescription || ""}\nChoice taken: ${node.choiceTaken || ""}`).join("\n---\n");
   const prompt = `
     STORY HISTORY:
     ${conversationHistory}
@@ -934,17 +987,20 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     
     ${customTwist ? `WRITER DIRECTIVE / PLOT TWIST: ${customTwist}. Make sure to fulfill this instruction clearly and dramatically inside this new scene output.` : ''}
     
-    Now, generate the next scene.
+    ${isWhatIfMode ? `WARNING: We are in alternate What If mode. Explore a dramatic "what if" scenario reflecting what happens if the player takes this path, deviating from their main timeline bounds.` : ''}
+
+    Now, generate the next scene structure.
   `;
 
   try {
+    const selectedModel = mode === "light" ? "gemini-3.5-flash" : "gemini-3.1-pro-preview";
     const response = await generateContentWithFallback({
-      primaryModel: "gemini-3.1-pro-preview",
+      primaryModel: selectedModel,
       fallbackModel: "gemini-3.5-flash",
       contents: prompt,
       config: {
         systemInstruction,
-        temperature: 0.7,
+        temperature: mode === "deep" ? 0.8 : 0.7,
         responseMimeType: "application/json",
         responseSchema: StoryNodeSchema
       }

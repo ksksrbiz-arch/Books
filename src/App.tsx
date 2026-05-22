@@ -46,6 +46,7 @@ import {
   Lock,
   Bookmark,
   Trash,
+  GitBranch,
 } from "lucide-react";
 import {
   auth,
@@ -76,21 +77,13 @@ const EffectsOverlay = lazy(() =>
     default: m.EffectsOverlay,
   })),
 );
-const EnhancedImageContainer = lazy(() =>
-  import("./components/EnhancedImageContainer").then((m) => ({
-    default: m.EnhancedImageContainer,
-  })),
-);
+import { EnhancedImageContainer } from "./components/EnhancedImageContainer";
 const IntroductionParticles = lazy(() =>
   import("./components/IntroductionParticles").then((m) => ({
     default: m.IntroductionParticles,
   })),
 );
-const ImageFallbackContainer = lazy(() =>
-  import("./components/ImageFallbackContainer").then((m) => ({
-    default: m.ImageFallbackContainer,
-  })),
-);
+import { ImageFallbackContainer } from "./components/ImageFallbackContainer";
 import OnboardingTutorial from "./components/OnboardingTutorial";
 import { RelationshipMeter } from "./components/RelationshipMeter";
 import { BranchingTimeline } from "./components/BranchingTimeline";
@@ -135,6 +128,12 @@ interface StoryNode {
   isEnding?: boolean;
   endingType?: string;
   imageGenFailed?: boolean;
+  echoes?: {
+    shortTermEcho: string;
+    mediumTermEcho: string;
+    longTermEcho: string;
+    fateComplexityScore: number;
+  };
 }
 
 type Genre = "romance" | "crime" | "paranormal" | null;
@@ -450,12 +449,40 @@ function App() {
     return "player";
   });
   const [customTwist, setCustomTwist] = useState("");
-  const [creatorTab, setCreatorTab] = useState<"outline" | "grimoire" | "parameters" | "collab" | "export">("outline");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [isDirty, setIsDirty] = useState(false);
+  const lastStateRef = useRef<string>("");
+
+  // Temporal "What If" alternate branch states
+  const [isWhatIfMode, setIsWhatIfMode] = useState(false);
+  const [backupTimelineState, setBackupTimelineState] = useState<{
+    currentNode: any;
+    history: any[];
+    relationships: any;
+    storyMilestones: any;
+    consequences: any;
+    allSteps: any[];
+  } | null>(null);
+
+  // Dynamic Ripple Feed database timeline stores
+  const [echoTimeline, setEchoTimeline] = useState<Array<{
+    id: string;
+    sceneTitle: string;
+    choiceTaken: string;
+    shortTerm: string;
+    mediumTerm: string;
+    longTerm: string;
+    complexityScore: number;
+    timestamp: string;
+  }>>([]);
+  const [creatorTab, setCreatorTab] = useState<"outline" | "grimoire" | "parameters" | "ripples" | "collab" | "export">("outline");
   const [showCreatorPanel, setShowCreatorPanel] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [sharedLink, setSharedLink] = useState<string | null>(null);
 
   const [choicePreviews, setChoicePreviews] = useState<Record<number, boolean>>({});
+  const [microActionText, setMicroActionText] = useState<string | null>(null);
+  const [activeMicroAction, setActiveMicroAction] = useState<string | null>(null);
   const [selectedText, setSelectedText] = useState("");
   const [selectionCoords, setSelectionCoords] = useState<{ x: number; y: number } | null>(null);
   const [extractingLore, setExtractingLore] = useState(false);
@@ -482,7 +509,208 @@ function App() {
     volumeSFX: 70,
     volumeAmbient: 60,
     isMuted: false,
+    simulationMode: "standard" as "light" | "standard" | "deep",
+    fateTokens: 3840,
   });
+
+  // Helper to serialize our core narrative state for precise dirty tracking
+  const serializeState = () => {
+    return JSON.stringify({
+      sceneTitle: currentNode?.sceneTitle || "",
+      milestones: storyMilestones || [],
+      consequences: consequences || {},
+      relationships: relationships || {},
+      parameters: {
+        length: storyParameters.length || "medium",
+        archetype: storyParameters.archetype || "",
+        backstory: storyParameters.backstory || "",
+        complexity: storyParameters.complexity || "complex",
+        tone: storyParameters.tone || "intense",
+        isAdultContent: !!storyParameters.isAdultContent,
+        customBasis: storyParameters.customBasis || "",
+      },
+      customTwist: customTwist || "",
+    });
+  };
+
+  // Reset lastStateRef when active story changes
+  useEffect(() => {
+    lastStateRef.current = "";
+    setIsDirty(false);
+    setSaveStatus("idle");
+  }, [currentStoryId]);
+
+  // Synchronise dirty states based on value hashing
+  useEffect(() => {
+    if (!user || !currentStoryId || !currentNode || loading) {
+      return;
+    }
+
+    const currentStr = serializeState();
+    if (lastStateRef.current === "") {
+      // Initialize on load
+      lastStateRef.current = currentStr;
+      setIsDirty(false);
+      return;
+    }
+
+    if (currentStr !== lastStateRef.current) {
+      setIsDirty(true);
+    } else {
+      setIsDirty(false);
+    }
+  }, [currentNode, storyMilestones, consequences, relationships, storyParameters, customTwist, currentStoryId, loading, user]);
+
+  // Debounced Auto-Saver + 60s backup interval
+  useEffect(() => {
+    if (!isDirty || !user || !currentStoryId || !currentNode || loading) {
+      return;
+    }
+
+    let debounceTimer: NodeJS.Timeout | null = null;
+    let intervalTimer: NodeJS.Timeout | null = null;
+
+    const performSave = async () => {
+      setSaveStatus("saving");
+      try {
+        await setDoc(
+          doc(db, "users", user.uid, "stories", currentStoryId),
+          {
+            updatedAt: serverTimestamp(),
+            relationships: relationships || {},
+            storyMilestones: storyMilestones || [],
+            consequences: consequences || {},
+            storyParameters: {
+              length: storyParameters.length || "medium",
+              archetype: storyParameters.archetype || "",
+              backstory: storyParameters.backstory || "",
+              complexity: storyParameters.complexity || "complex",
+              tone: storyParameters.tone || "intense",
+              isAdultContent: !!storyParameters.isAdultContent,
+              customBasis: storyParameters.customBasis || "",
+            },
+            customTwist: customTwist || "",
+            currentNodePosition: {
+              sceneTitle: currentNode.sceneTitle || "",
+              sceneDescription: currentNode.sceneDescription || "",
+              choices: currentNode.choices || [],
+              imagePrompt: currentNode.imagePrompt || "",
+              mediaType: currentNode.mediaType || "image",
+              mood: currentNode.mood || "mystery",
+              intensity: currentNode.intensity || 3,
+              imageUrl: currentNode.imageUrl || null,
+              videoUrl: currentNode.videoUrl || null,
+              isEnding: !!currentNode.isEnding,
+              endingType: currentNode.endingType || null,
+            },
+          },
+          { merge: true }
+        ).catch((err) =>
+          handleFirestoreError(
+            err,
+            OperationType.UPDATE,
+            `users/${user.uid}/stories/${currentStoryId}`
+          )
+        );
+
+        lastStateRef.current = serializeState();
+        setIsDirty(false);
+        setSaveStatus("saved");
+        setTimeout(() => {
+          setSaveStatus("idle");
+        }, 3000);
+      } catch (err: any) {
+        console.error("Auto-save operation exception: ", err);
+        setSaveStatus("error");
+      }
+    };
+
+    // Debounce save by 3.5 seconds of user quiescence
+    debounceTimer = setTimeout(() => {
+      performSave();
+    }, 3500);
+
+    // Save interval of 60 seconds forced fallback
+    intervalTimer = setInterval(() => {
+      performSave();
+    }, 60000);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (intervalTimer) clearInterval(intervalTimer);
+    };
+  }, [isDirty, user, currentStoryId, currentNode, loading, relationships, consequences, storyMilestones, storyParameters, customTwist]);
+
+  // Temporal Reality Fork (What If Mode) Operations
+  const toggleWhatIfMode = () => {
+    if (!isWhatIfMode) {
+      setBackupTimelineState({
+        currentNode,
+        history,
+        relationships,
+        storyMilestones,
+        consequences,
+        allSteps
+      });
+      setIsWhatIfMode(true);
+      
+      // Inject timeline notification
+      setNpcUpdateNotifs((prev) => [
+        ...prev,
+        {
+          id: Date.now() + Math.random(),
+          name: "Temporal Pivot",
+          affinityChange: -1,
+          relationshipType: "suspicion",
+          reason: "Alternate temporal branch spawned. Real-time changes are non-persistent."
+        }
+      ]);
+    } else {
+      snapBackTimeline();
+    }
+  };
+
+  const commitWhatIfTimeline = async () => {
+    setBackupTimelineState(null);
+    setIsWhatIfMode(false);
+    
+    // Inject fusion notification
+    setNpcUpdateNotifs((prev) => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        name: "Timeline Fusion",
+        affinityChange: 100,
+        relationshipType: "affinity",
+        reason: "Alternate timeline permanently prioritized and woven into main branch."
+      }
+    ]);
+  };
+
+  const snapBackTimeline = () => {
+    if (backupTimelineState) {
+      setCurrentNode(backupTimelineState.currentNode);
+      setHistory(backupTimelineState.history);
+      setRelationships(backupTimelineState.relationships);
+      setStoryMilestones(backupTimelineState.storyMilestones);
+      setConsequences(backupTimelineState.consequences);
+      setAllSteps(backupTimelineState.allSteps);
+    }
+    setBackupTimelineState(null);
+    setIsWhatIfMode(false);
+    
+    // Inject snap back notification
+    setNpcUpdateNotifs((prev) => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        name: "Snap Back",
+        affinityChange: -100,
+        relationshipType: "suspicion",
+        reason: "Snapped back successfully to primordial parent coordinate timeline."
+      }
+    ]);
+  };
 
   // Scroll to top on node change
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1157,6 +1385,24 @@ function App() {
       if (!response.ok) throw new Error("Failed to start story");
       const data = await response.json();
 
+      // Clear/Initialize echo timeline with initial cinematic ripples
+      if (data.echoes) {
+        setEchoTimeline([
+          {
+            id: Date.now().toString() + Math.random().toString(),
+            sceneTitle: data.sceneTitle || "Genesis Pivot",
+            choiceTaken: "Story Initialized",
+            shortTerm: data.echoes.shortTermEcho || "Reality canvas constructed.",
+            mediumTerm: data.echoes.mediumTermEcho || "Initial variables localized.",
+            longTerm: data.echoes.longTermEcho || "Primary anchor threads locked.",
+            complexityScore: data.echoes.fateComplexityScore || 35,
+            timestamp: new Date().toLocaleTimeString(),
+          }
+        ]);
+      } else {
+        setEchoTimeline([]);
+      }
+
       // Initialize relationships empty on new story
       setRelationships({});
       setNpcUpdateNotifs([]);
@@ -1338,6 +1584,8 @@ function App() {
           consequences,
           isFinalChoice,
           customTwist: appMode === "creator" ? customTwist : "",
+          simulationMode: settings.simulationMode || "standard",
+          isWhatIfMode: isWhatIfMode || false,
         }),
       });
       if (!response.ok) throw new Error("Failed to continue story");
@@ -1408,81 +1656,119 @@ function App() {
         setCustomTwist("");
       }, 50);
 
-      // Update Firestore
-      await setDoc(
-        doc(db, "users", user.uid, "stories", currentStoryId),
-        {
-          updatedAt: serverTimestamp(),
-          consequences: updatedConsequences,
-          storyMilestones: updatedMilestones,
-          relationships: updatedRelationships,
-        },
-        { merge: true },
-      ).catch((err) =>
-        handleFirestoreError(
-          err,
-          OperationType.UPDATE,
-          `users/${user.uid}/stories/${currentStoryId}`,
-        ),
-      );
+      // Deduct simulated token expenditures based on active complexity mode
+      const cost = settings.simulationMode === "light" ? 10 : settings.simulationMode === "deep" ? 60 : 30;
+      setSettings((s) => ({
+        ...s,
+        fateTokens: Math.max(0, (s.fateTokens || 3840) - cost),
+      }));
 
-      // Save new NPC relationship updates to subcollection
-      if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
-        for (const update of data.npcUpdates) {
-          await addDoc(
-            collection(db, "users", user.uid, "stories", currentStoryId, "relationship_logs"),
-            {
-              name: update.name,
-              relationshipType: update.relationshipType,
-              affinityChange: update.affinityChange,
-              reason: update.reason || "Decisive player action",
-              timestamp: new Date().toISOString()
-            }
-          ).catch(err => console.error("Error saving rel log: ", err));
-        }
-      }
-
-      const stepRef = await addDoc(
-        collection(db, "users", user.uid, "stories", currentStoryId, "steps"),
-        {
-          sceneTitle: data.sceneTitle,
-          sceneDescription: data.sceneDescription,
-          imageUrl: null,
-          videoUrl: null,
-          choiceTaken: choice.text,
-          imagePrompt: data.imagePrompt,
-          mediaType: data.mediaType,
-          choices: data.choices || [],
-          mood: data.mood,
-          intensity: data.intensity,
-          isEnding: !!data.isEnding,
-          endingType: data.endingType || null,
-          milestonesAchieved: data.milestonesAchieved || [],
-          timestamp: serverTimestamp(),
-        },
-      ).catch((err) =>
-        handleFirestoreError(
-          err,
-          OperationType.CREATE,
-          `users/${user.uid}/stories/${currentStoryId}/steps`,
-        ),
-      );
-
-      const isDocRef = (ref: any): ref is { id: string } =>
-        ref && typeof ref === "object" && "id" in ref;
-      if (isDocRef(stepRef)) {
-        setAllSteps((prev) => [
+      // Record newly generated narrative echoes & ripples
+      if (data.echoes) {
+        setEchoTimeline((prev) => [
           ...prev,
-          { ...data, id: stepRef.id, choiceTaken: choice.text },
+          {
+            id: Date.now().toString() + Math.random().toString(),
+            sceneTitle: data.sceneTitle || "Reality Pivot",
+            choiceTaken: choice.text,
+            shortTerm: data.echoes.shortTermEcho || "Immediate local shift.",
+            mediumTerm: data.echoes.mediumTermEcho || "Secondary ripple propagating.",
+            longTerm: data.echoes.longTermEcho || "Permanent world paradigm adjusted.",
+            complexityScore: data.echoes.fateComplexityScore || 35,
+            timestamp: new Date().toLocaleTimeString(),
+          },
         ]);
       }
 
-      generateMedia(
-        data.imagePrompt,
-        data.mood,
-        data.mediaType,
-        currentStoryId,
-      );
+      let stepRef: any = null;
+
+      if (!isWhatIfMode) {
+        // Update Firestore database
+        await setDoc(
+          doc(db, "users", user.uid, "stories", currentStoryId),
+          {
+            updatedAt: serverTimestamp(),
+            consequences: updatedConsequences,
+            storyMilestones: updatedMilestones,
+            relationships: updatedRelationships,
+          },
+          { merge: true },
+        ).catch((err) =>
+          handleFirestoreError(
+            err,
+            OperationType.UPDATE,
+            `users/${user.uid}/stories/${currentStoryId}`,
+          ),
+        );
+
+        // Save new NPC relationship updates to subcollection
+        if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
+          for (const update of data.npcUpdates) {
+            await addDoc(
+              collection(db, "users", user.uid, "stories", currentStoryId, "relationship_logs"),
+              {
+                name: update.name,
+                relationshipType: update.relationshipType,
+                affinityChange: update.affinityChange,
+                reason: update.reason || "Decisive player action",
+                timestamp: new Date().toISOString()
+              }
+            ).catch(err => console.error("Error saving rel log: ", err));
+          }
+        }
+
+        stepRef = await addDoc(
+          collection(db, "users", user.uid, "stories", currentStoryId, "steps"),
+          {
+            sceneTitle: data.sceneTitle,
+            sceneDescription: data.sceneDescription,
+            imageUrl: null,
+            videoUrl: null,
+            choiceTaken: choice.text,
+            imagePrompt: data.imagePrompt,
+            mediaType: data.mediaType,
+            choices: data.choices || [],
+            mood: data.mood,
+            intensity: data.intensity,
+            isEnding: !!data.isEnding,
+            endingType: data.endingType || null,
+            milestonesAchieved: data.milestonesAchieved || [],
+            timestamp: serverTimestamp(),
+          },
+        ).catch((err) =>
+          handleFirestoreError(
+            err,
+            OperationType.CREATE,
+            `users/${user.uid}/stories/${currentStoryId}/steps`,
+          ),
+        );
+      } else {
+        // Virtual mock coordinate for client alternate rendering
+        stepRef = { id: "what-if-step-" + Date.now() };
+      }
+
+      const isDocRef = (ref: any): ref is { id: string } =>
+        ref && typeof ref === "object" && "id" in ref;
+      if (isDocRef(stepRef) || (stepRef && stepRef.id)) {
+        setAllSteps((prev) => [
+          ...prev,
+          { 
+            ...data, 
+            id: stepRef ? stepRef.id : ("step-" + Date.now()), 
+            choiceTaken: choice.text,
+            isAlternativeBranch: isWhatIfMode 
+          },
+        ]);
+      }
+
+      if (!isWhatIfMode) {
+        generateMedia(
+          data.imagePrompt,
+          data.mood,
+          data.mediaType,
+          currentStoryId,
+        );
+      }
     } catch (err: any) {
       setIsSceneFadingOut(false);
       setCurrentNode(savedNode); // Restore the old scene so user can retry the choice
@@ -3050,6 +3336,36 @@ function App() {
               >
                 <Settings className="w-4 h-4" />
               </button>
+
+              {/* Premium Auto-Save Feedback UI Indicator */}
+              {currentStoryId && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/5 text-[10px] font-medium transition-all duration-300">
+                  {saveStatus === "saving" && (
+                    <span className="flex items-center gap-1.5 text-amber-400">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span className="font-mono text-[9px] uppercase tracking-wider animate-pulse">Saving...</span>
+                    </span>
+                  )}
+                  {saveStatus === "saved" && (
+                    <span className="flex items-center gap-1.5 text-emerald-400 animate-bounce">
+                      <Check className="w-3 h-3 text-emerald-400 animate-pulse" />
+                      <span className="font-mono text-[9px] uppercase tracking-wider font-extrabold">Saved</span>
+                    </span>
+                  )}
+                  {saveStatus === "error" && (
+                    <span className="flex items-center gap-1.5 text-rose-400">
+                      <X className="w-3 h-3 text-rose-400" />
+                      <span className="font-mono text-[9px] uppercase tracking-wider font-extrabold">Sync Err</span>
+                    </span>
+                  )}
+                  {saveStatus === "idle" && (
+                    <span className="flex items-center gap-1.5 text-gray-500 hover:text-gray-300 transition-colors">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50"></span>
+                      <span className="font-mono text-[9px] uppercase tracking-wider">Sync Active</span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -3114,7 +3430,7 @@ function App() {
               }`}
             >
               <RefreshCcw className="w-3 h-3" />
-              New Fate
+              Start Fresh Timeline
             </button>
           )}
 
@@ -3317,7 +3633,7 @@ function App() {
                   }`}
                 >
                   <RefreshCcw className="w-4 h-4 shrink-0" />
-                  New Fate
+                  Start Fresh Timeline
                 </button>
               )}
 
@@ -4550,6 +4866,140 @@ function App() {
                                     )}
                                   </AnimatePresence>
 
+                                  {/* Fate Simulation Core Dashboard */}
+                                  <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 shadow-2xl space-y-4 text-left">
+                                    <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-gray-400">
+                                      <span className="flex items-center gap-1.5 font-bold text-amber-500">
+                                        <Sparkles className="w-3.5 h-3.5 animate-pulse" /> Simulation Engine
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-bold">
+                                        Balance: <span className="text-amber-400 font-extrabold">{settings.fateTokens !== undefined ? settings.fateTokens : 3840} FATE</span>
+                                      </span>
+                                    </div>
+
+                                    {/* Mode Switches */}
+                                    <div className="grid grid-cols-3 gap-2">
+                                      {(["light", "standard", "deep"] as const).map((mode) => (
+                                        <button
+                                          key={mode}
+                                          disabled={loading}
+                                          onClick={() => {
+                                            setSettings((s) => ({ ...s, simulationMode: mode }));
+                                          }}
+                                          className={`py-2 px-1 rounded-xl border text-[8px] uppercase tracking-widest font-black transition-all cursor-pointer text-center ${
+                                            settings.simulationMode === mode
+                                              ? "bg-amber-500/10 border-amber-500/30 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.05)]"
+                                              : "bg-white/[0.01] border-white/5 text-gray-500 hover:text-gray-300 hover:bg-white/[0.03]"
+                                          }`}
+                                        >
+                                          {mode}
+                                        </button>
+                                      ))}
+                                    </div>
+
+                                    {/* Complexity and Cost Gauge */}
+                                    <div className="pt-3 border-t border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-left">
+                                      <div className="flex-1 space-y-1.5">
+                                        <div className="flex justify-between items-center text-[8px] uppercase font-mono tracking-wider opacity-60">
+                                          <span>⚡ Timeline Complexity</span>
+                                          <span className="font-bold text-amber-400">{currentNode?.echoes?.fateComplexityScore || 35}%</span>
+                                        </div>
+                                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                          <div 
+                                            className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-rose-500 transition-all duration-1000" 
+                                            style={{ width: `${currentNode?.echoes?.fateComplexityScore || 35}%` }}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center justify-between md:justify-end gap-3 shrink-0">
+                                        <span className="text-[9px] uppercase font-mono text-gray-400 font-bold">
+                                          Cost: <span className="text-rose-400">-{settings.simulationMode === "light" ? 10 : settings.simulationMode === "deep" ? 60 : 30}</span>
+                                        </span>
+                                        
+                                        <button
+                                          onClick={() => {
+                                            setSettings((s) => ({ ...s, fateTokens: (s.fateTokens !== undefined ? s.fateTokens : 3840) + 2000 }));
+                                          }}
+                                          className="px-2 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[8px] uppercase tracking-wider font-extrabold transition-all cursor-pointer border border-emerald-500/20"
+                                        >
+                                          +2k Balance
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Temporal branches control board */}
+                                    <div className="pt-3 border-t border-white/5 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[9px] uppercase font-mono tracking-wider text-gray-400 flex items-center gap-1">
+                                          <GitBranch className="w-3.5 h-3.5 text-purple-400" /> Temporal What-If Forking
+                                        </span>
+                                        
+                                        <button
+                                          onClick={toggleWhatIfMode}
+                                          className={`relative w-8 h-4 rounded-full transition-colors cursor-pointer ${isWhatIfMode ? "bg-purple-500" : "bg-white/10"}`}
+                                        >
+                                          <div 
+                                            className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${isWhatIfMode ? "left-4.5" : "left-0.5"}`}
+                                          />
+                                        </button>
+                                      </div>
+
+                                      {isWhatIfMode && (
+                                        <motion.div
+                                          initial={{ opacity: 0, y: -5 }}
+                                          animate={{ opacity: 1, y: 0 }}
+                                          className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-3"
+                                        >
+                                          <p className="text-[9px] leading-relaxed text-purple-200">
+                                            ⚠️ Alt Reality Virtualization engaged! Future milestones, relationship changes, and steps are simulation prototypes and will NOT rewrite your prime save file unless you fuse the branch explicitly.
+                                          </p>
+                                          <div className="grid grid-cols-2 gap-2 pt-1 font-mono">
+                                            <button
+                                              onClick={commitWhatIfTimeline}
+                                              className="py-1.5 px-3 rounded-xl bg-purple-500/30 hover:bg-purple-500/40 text-purple-200 text-[8px] uppercase tracking-wider font-black transition-all cursor-pointer border border-purple-500/30 text-center"
+                                            >
+                                              Fuse to Prime
+                                            </button>
+                                            <button
+                                              onClick={snapBackTimeline}
+                                              className="py-1.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-[8px] uppercase tracking-wide font-black transition-all cursor-pointer border border-white/5 text-center"
+                                            >
+                                              Collapse Loop
+                                            </button>
+                                          </div>
+                                        </motion.div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Contextual Coach Mark */}
+                                  {allSteps.length >= 2 && !localStorage.getItem("coach_mark_grimoire_dismissed") && (
+                                    <motion.div
+                                      initial={{ opacity: 0, y: -10 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 to-amber-600/15 border border-amber-500/30 text-xs text-amber-200 space-y-2 relative"
+                                    >
+                                      <button
+                                        onClick={() => {
+                                          localStorage.setItem("coach_mark_grimoire_dismissed", "true");
+                                          // Trigger generic re-render trigger
+                                          setChoicePreviews(prev => ({ ...prev })); 
+                                        }}
+                                        className="absolute top-2.5 right-2.5 text-amber-400 hover:text-white transition-colors"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                      <div className="flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                                        <span className="font-extrabold uppercase text-[9px] tracking-widest text-amber-300">AUTHORSHIP IGNITED</span>
+                                      </div>
+                                      <p className="text-[11px] leading-relaxed opacity-90 font-serif">
+                                        Your choices are shaping the **Grimoire** in real time! Access the Grimoire from the top bar to inspect discovered files, items, character alignments, and timeline branches.
+                                      </p>
+                                    </motion.div>
+                                  )}
+
                                   <div className="space-y-4">
                                     {currentNode.choices?.map((choice, idx) => {
                                       const flickerClass = settings.reducedMotion || settings.readerMode
@@ -4571,12 +5021,23 @@ function App() {
                                                 handleChoice(choice);
                                               }
                                             }}
-                                            initial={settings.reducedMotion ? { opacity: 0, x: -10 } : { opacity: 0, x: -15, filter: "brightness(0.4) blur(1px)" }}
-                                            animate={settings.reducedMotion ? { opacity: 1, x: 0 } : { opacity: [0, 0.4, 0.2, 0.95, 0.6, 1], x: 0, filter: "brightness(1) blur(0px)" }}
+                                            onMouseEnter={() => {
+                                              if (!settings.reducedMotion) {
+                                                setChoicePreviews((prev) => ({ ...prev, [idx]: true }));
+                                              }
+                                            }}
+                                            onMouseLeave={() => {
+                                              if (!settings.reducedMotion) {
+                                                setChoicePreviews((prev) => ({ ...prev, [idx]: false }));
+                                              }
+                                            }}
+                                            initial={settings.reducedMotion ? { opacity: 0, y: 5 } : { opacity: 0, y: -25, filter: "brightness(0.4) blur(1px)" }}
+                                            whileInView={settings.reducedMotion ? { opacity: 1, y: 0 } : { opacity: 1, y: 0, filter: "brightness(1) blur(0px)" }}
+                                            viewport={{ once: true }}
                                             transition={{
-                                              duration: 0.8,
-                                              delay: 0.5 + idx * 0.15,
-                                              ease: "easeInOut"
+                                              duration: 0.6,
+                                              delay: 0.25 + idx * 0.12,
+                                              ease: "easeOut"
                                             }}
                                             onClick={() => handleChoice(choice)}
                                             className={`group relative text-left transition-all duration-300 transform active:scale-[0.98] w-full cursor-pointer ${
@@ -4607,7 +5068,7 @@ function App() {
                                               className="mt-3 flex items-center justify-between border-t border-white/5 pt-2 w-full text-[10px]" 
                                               onClick={(e) => { e.stopPropagation(); }}
                                             >
-                                              <span className="text-[10px] text-gray-500 font-medium">Branch Consequence</span>
+                                              <span className="text-[10px] text-gray-500 font-medium">Sense the Ripples</span>
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
@@ -4619,7 +5080,7 @@ function App() {
                                                     : "bg-white/5 border-white/5 text-gray-400 hover:text-white"
                                                 }`}
                                               >
-                                                <Eye className="w-3.5 h-3.5" /> {choicePreviews[idx] ? "Hide Echoes" : "Preview Echoes"}
+                                                <Eye className="w-3.5 h-3.5" /> {choicePreviews[idx] ? "Muffle Echo" : "Sense Ripples"}
                                               </button>
                                             </div>
 
@@ -4632,9 +5093,15 @@ function App() {
                                                   exit={{ opacity: 0, height: 0 }}
                                                   className="mt-3.5 border-t border-white/5 pt-3 space-y-2 text-left w-full overflow-hidden"
                                                 >
-                                                  <div className="bg-slate-900/50 p-3 rounded-2xl border border-white/5 text-[11px] text-gray-300 leading-relaxed font-sans font-medium">
-                                                    <span className="font-extrabold uppercase text-[9px] text-amber-400 block tracking-wider mb-1">Estimated Afterward:</span>
-                                                    {choice.nextContext || "The fate of this branch remains shrouded in dense mystery."}
+                                                  <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-amber-500/10 text-[11px] leading-relaxed font-serif space-y-3.5 text-gray-300">
+                                                    <div>
+                                                      <span className="font-black text-[9px] text-amber-400 block tracking-widest uppercase mb-1">⚡ SHORT-TERM EFFECT</span>
+                                                      <p className="opacity-95 text-gray-200 font-sans text-xs leading-relaxed">{choice.nextContext || "Immediate outcome takes shape based on this decision."}</p>
+                                                    </div>
+                                                    <div className="pt-2.5 border-t border-white/5">
+                                                      <span className="font-black text-[9px] text-sky-400 block tracking-widest uppercase mb-1">🌊 LONG-TERM RIPPLE</span>
+                                                      <p className="opacity-70 font-mono text-[9.5px] leading-relaxed">This decision locks in story pathways, shifting Entity Resonance meters and timelines in your chronological Grimoire tree irreversibly.</p>
+                                                    </div>
                                                   </div>
 
                                                   <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -4666,6 +5133,116 @@ function App() {
                                         </div>
                                       );
                                     })}
+
+                                    {/* Surprise Me / Let Fate Decide Option */}
+                                    {currentNode.choices && currentNode.choices.length > 0 && (
+                                      <motion.div
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            const randomIndex = Math.floor(Math.random() * (currentNode.choices?.length || 1));
+                                            handleChoice(currentNode.choices![randomIndex]);
+                                          }
+                                        }}
+                                        initial={{ opacity: 0, scale: 0.98 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        transition={{ delay: 0.9 }}
+                                        onClick={() => {
+                                          const randomIndex = Math.floor(Math.random() * (currentNode.choices?.length || 1));
+                                          handleChoice(currentNode.choices![randomIndex]);
+                                        }}
+                                        className="relative group text-left transition-all duration-300 transform active:scale-[0.98] w-full cursor-pointer p-5 rounded-3xl border border-dashed border-amber-500/25 bg-amber-500/[0.03] hover:bg-amber-500/[0.08] hover:border-amber-500/40 flex items-center justify-between"
+                                      >
+                                        <div className="flex items-center gap-3.5">
+                                          <div className="p-2 bg-amber-500/10 text-amber-300 rounded-xl group-hover:rotate-12 transition-transform">
+                                            <Sparkles className="w-4 h-4" />
+                                          </div>
+                                          <div>
+                                            <span className="font-extrabold text-xs uppercase tracking-widest text-amber-200">Surprise Me (Let Fate Decide)</span>
+                                            <p className="text-[10px] text-gray-500 font-mono mt-0.5">Accept destiny and select one of the core options at random.</p>
+                                          </div>
+                                        </div>
+                                        <ArrowRight className="w-4 h-4 text-amber-300 transform group-hover:translate-x-1 transition-transform" />
+                                      </motion.div>
+                                    )}
+
+                                    {/* Temporal Whispers / Micro-actions */}
+                                    <div className="pt-4 border-t border-white/5 mt-2 space-y-3">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] text-gray-500 font-extrabold uppercase tracking-wider">Temporal Introspection</span>
+                                        <span className="text-[9px] text-amber-400 font-mono">Cognitive Aids</span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <button
+                                          onClick={() => {
+                                            setActiveMicroAction("context");
+                                            setMicroActionText("Temporal Echoes: Your senses examine the local space. This path holds strong traces of prior journeys. Check active Codex cards and item attachments logged in the Grimoire before proceeding.");
+                                          }}
+                                          className={`px-3 py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all border text-center cursor-pointer ${
+                                            activeMicroAction === "context"
+                                              ? "bg-amber-500/10 text-amber-300 border-amber-500/35 shadow-sm"
+                                              : "bg-white/5 border-white/5 text-gray-400 hover:text-white"
+                                          }`}
+                                        >
+                                          🔎 Ask Context
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setActiveMicroAction("memory");
+                                            setMicroActionText(`Origin Compass: Deep in your memory as a ${storyParameters.archetype || "pioneer"}, your roots guide your path. Keep your backstory ("${storyParameters.backstory || "origin story undefined"}") as your ultimate goal.`);
+                                          }}
+                                          className={`px-3 py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all border text-center cursor-pointer ${
+                                            activeMicroAction === "memory"
+                                              ? "bg-amber-500/10 text-amber-300 border-amber-500/35 shadow-sm"
+                                              : "bg-white/5 border-white/5 text-gray-400 hover:text-white"
+                                          }`}
+                                        >
+                                          📜 Consult Memory
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setActiveMicroAction("motives");
+                                            setMicroActionText("Entity Discernment: You analyze behavior markers. Pay close attention to surrounding players and targets; aligning with or betraying their trust will shift affinity levels immediately.");
+                                          }}
+                                          className={`px-3 py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all border text-center cursor-pointer ${
+                                            activeMicroAction === "motives"
+                                              ? "bg-amber-500/10 text-amber-300 border-amber-500/35 shadow-sm"
+                                              : "bg-white/5 border-white/5 text-gray-400 hover:text-white"
+                                          }`}
+                                        >
+                                          👥 Study Motives
+                                        </button>
+                                      </div>
+
+                                      <AnimatePresence>
+                                        {microActionText && (
+                                          <motion.div
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className="p-3.5 rounded-2xl bg-zinc-900 border border-amber-500/20 text-[10.5px] leading-relaxed text-gray-300 relative font-serif"
+                                          >
+                                            <button
+                                              onClick={() => {
+                                                setMicroActionText(null);
+                                                setActiveMicroAction(null);
+                                              }}
+                                              className="absolute top-2.5 right-2.5 text-gray-500 hover:text-white cursor-pointer"
+                                            >
+                                              <X className="w-3.5 h-3.5" />
+                                            </button>
+                                            <span className="font-sans font-black uppercase text-[8px] tracking-widest text-amber-400 block mb-1">
+                                              {activeMicroAction === "context" && "🔎 Temporal Clue Revealed"}
+                                              {activeMicroAction === "memory" && "📜 Backstory Compass"}
+                                              {activeMicroAction === "motives" && "👥 Alignment Warning"}
+                                            </span>
+                                            {microActionText}
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
+                                    </div>
                                   </div>
 
                                   <div className="pt-6 border-t border-white/5 mt-4 space-y-4">
@@ -4890,7 +5467,7 @@ function App() {
 
             {/* Selector Tabs */}
             <div className="flex border-b border-white/5 bg-[#0b1019] p-1 gap-1">
-              {(["outline", "grimoire", "parameters", "collab", "export"] as const).map((tab) => (
+              {(["outline", "grimoire", "parameters", "ripples", "collab", "export"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setCreatorTab(tab)}
@@ -4930,21 +5507,24 @@ function App() {
                               branchToStep(idx);
                             }
                           }}
-                          className="p-4 rounded-xl border border-white/5 bg-slate-900/60 hover:border-amber-500/30 hover:bg-slate-950/80 transition-all text-left flex items-start gap-4 group cursor-pointer"
+                          className={`p-4 rounded-xl border bg-slate-900/60 hover:border-amber-500/30 hover:bg-slate-950/80 transition-all text-left flex items-start gap-4 group cursor-pointer ${step.isAlternativeBranch ? "border-purple-500/25 shadow-[inset_0_0_10px_rgba(168,85,247,0.05)]" : "border-white/5"}`}
                         >
-                          <div className="w-6 h-6 rounded-md bg-amber-500/10 text-amber-400 flex items-center justify-center text-xs font-mono font-bold shrink-0">
+                          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-mono font-bold shrink-0 ${step.isAlternativeBranch ? "bg-purple-500/10 text-purple-400" : "bg-amber-500/10 text-amber-400"}`}>
                             {idx + 1}
                           </div>
                           <div className="flex-1 space-y-1 overflow-hidden">
-                            <h5 className="text-xs font-bold text-gray-200 uppercase group-hover:text-amber-400 transition-colors">
+                            <h5 className="text-xs font-bold text-gray-200 uppercase group-hover:text-amber-400 transition-colors flex items-center gap-2">
                               {step.sceneTitle}
+                              {step.isAlternativeBranch && (
+                                <span className="text-[7.5px] uppercase font-mono px-1.5 py-0.5 bg-purple-500/10 text-purple-300 border border-purple-500/20 rounded-md">WHAT IF BRANCH</span>
+                              )}
                             </h5>
                             <p className="text-[11px] text-gray-400 line-clamp-2 leading-relaxed">
                               {step.sceneDescription}
                             </p>
                             {step.choiceTaken && (
                               <div className="text-[10px] text-amber-500/80 font-mono font-bold uppercase mt-1">
-                                Decision Take: {step.choiceTaken}
+                                Decision Taken: {step.choiceTaken}
                               </div>
                             )}
                           </div>
@@ -4952,6 +5532,100 @@ function App() {
                       ))
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* TAB: RIPPLES & ECHO TIMELINE */}
+              {creatorTab === "ripples" && (
+                <div className="space-y-6">
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2 text-left">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" /> Echo Ripple Timeline
+                    </h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      Every choice vibrates outwards into three separate dimensions: immediate, short-term, and permanent. Review critical checkpoints below:
+                    </p>
+                  </div>
+
+                  {echoTimeline.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-gray-500 bg-white/[0.01] border border-white/5 rounded-2xl">
+                      No narrative vibrations registered yet. Select story choices to generate active ripples.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {echoTimeline.map((echo, index) => (
+                        <motion.div
+                          key={echo.id}
+                          initial={{ opacity: 0, y: 15 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.4, delay: index * 0.05 }}
+                          className="p-5 rounded-3xl border border-white/5 bg-white/[0.02] text-left relative overflow-hidden group space-y-3 shadow-md hover:border-amber-500/10 transition-all"
+                        >
+                          {/* Left Glow Coordinate Accent */}
+                          <div className="absolute top-0 bottom-0 left-0 w-[3px] bg-gradient-to-b from-amber-500 to-rose-500 opacity-60" />
+
+                          <div className="flex items-center justify-between text-[9px] font-mono tracking-wider text-gray-500">
+                            <span className="font-extrabold uppercase text-amber-400 bg-amber-500/5 px-2 py-0.5 rounded-lg border border-amber-500/10">
+                              ENTRY {index + 1}
+                            </span>
+                            <span>{echo.timestamp}</span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <h5 className="font-bold text-xs text-white tracking-tight leading-none">
+                              {echo.sceneTitle}
+                            </h5>
+                            <p className="text-[10px] text-gray-400 font-medium">
+                              Chosen: <span className="italic text-gray-300 font-semibold font-serif">"{echo.choiceTaken}"</span>
+                            </p>
+                          </div>
+
+                          {/* 3 Ripples */}
+                          <div className="grid grid-cols-1 gap-2 pt-2 border-t border-white/5">
+                            {/* Immediate Ripple */}
+                            <div className="p-2.5 rounded-xl bg-orange-500/5 border border-orange-500/10 space-y-1">
+                              <span className="text-[8px] uppercase tracking-wider font-extrabold text-orange-400 flex items-center gap-1">
+                                🔸 Immediate (Short-Term) Echo
+                              </span>
+                              <p className="text-[10px] text-gray-300 leading-relaxed font-sans">
+                                {echo.shortTerm}
+                              </p>
+                            </div>
+
+                            {/* Medium Ripple */}
+                            <div className="p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10 space-y-1">
+                              <span className="text-[8px] uppercase tracking-wider font-extrabold text-amber-400 flex items-center gap-1">
+                                🟡 Latent (Medium-Term) Ripple
+                              </span>
+                              <p className="text-[10px] text-gray-300 leading-relaxed font-sans">
+                                {echo.mediumTerm}
+                              </p>
+                            </div>
+
+                            {/* Long Ripple */}
+                            <div className="p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/10 space-y-1">
+                              <span className="text-[8px] uppercase tracking-wider font-extrabold text-rose-400 flex items-center gap-1">
+                                🔴 Permanent (Long-Term) Anchor
+                              </span>
+                              <p className="text-[10px] text-gray-300 leading-relaxed font-sans">
+                                {echo.longTerm}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Dynamic Complexity Rating badge footer */}
+                          <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                            <span className="text-[8px] uppercase font-mono text-gray-500 font-bold">
+                              Fate Complexity Factor
+                            </span>
+                            <span className="text-[10px] uppercase font-mono text-amber-300 font-black">
+                              {echo.complexityScore} / 100
+                            </span>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

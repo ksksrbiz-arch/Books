@@ -652,14 +652,32 @@ export function CodexLoreGlossary({
               </AnimatePresence>
 
               {filteredEntries.length === 0 && (
-                <div className="col-span-full py-16 text-center space-y-4 font-mono opacity-50 flex flex-col items-center justify-center border border-dashed border-current/15 rounded-2xl bg-white/[0.01]">
-                  <Scroll className="w-12 h-12 stroke-[1.25] text-current scale-110 mb-2 opacity-80" />
-                  <p className="text-sm font-semibold tracking-wide">
+                <div className="col-span-full py-16 text-center space-y-4 font-mono flex flex-col items-center justify-center border border-dashed border-current/20 rounded-2xl bg-white/[0.01] px-6">
+                  <Scroll className="w-12 h-12 stroke-[1.25] text-current scale-110 mb-2 opacity-60 animate-pulse" />
+                  <p className="text-sm font-semibold tracking-wide text-white">
                     NO DISCOVERED LOGS IN THE {activeTab.toUpperCase()} LEDGER
                   </p>
-                  <p className="text-[10px] max-w-sm tracking-wider leading-relaxed">
-                    Advance the narrative path or click &quot;Extract Scene Lore&quot; to awaken dynamic codex scrolls.
+                  <p className="text-[10px] max-w-sm tracking-wider leading-relaxed opacity-50">
+                    Advance the narrative path to discover new details, or click below to harvest dynamic codex journals instantly from this scene.
                   </p>
+                  {currentNode && activeTab !== "relationships" && (
+                    <button
+                      onClick={autoScanLore}
+                      disabled={isScanning}
+                      className={`mt-4 flex items-center gap-2 px-6 py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition-all shadow-md ${
+                        isScanning
+                          ? "bg-current/10 text-current opacity-60 cursor-not-allowed"
+                          : genre === "romance"
+                          ? "bg-rose-500 text-white hover:bg-rose-600 border-rose-400"
+                          : genre === "crime"
+                          ? "bg-yellow-500 text-black hover:bg-yellow-600 border-yellow-400"
+                          : "bg-purple-600 text-white hover:bg-purple-700 border-purple-500"
+                      }`}
+                    >
+                      <Sparkles className={`w-4 h-4 ${isScanning ? "animate-spin" : ""}`} />
+                      {isScanning ? "Harvesting Lore..." : "Seed Ledger from Current Scene"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

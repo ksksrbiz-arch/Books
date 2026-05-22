@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Loader2, Sparkles, Orbit, Compass, Hourglass, Scroll } from "lucide-react";
+import { Loader2, Sparkles, Orbit, Compass, Hourglass, Scroll, Flame, HelpCircle } from "lucide-react";
 
 interface AtmosphericFateLoaderProps {
   genre: string | null;
@@ -8,20 +8,20 @@ interface AtmosphericFateLoaderProps {
 
 const STAGES = [
   {
-    title: "Analyzing decision matrices",
-    subtitle: "Tracing the divergent feedback of your chosen actions..."
+    title: "Weighing consequences",
+    subtitle: "Evaluating the gravity of your path..."
   },
   {
-    title: "Weaving consequences",
-    subtitle: "Weighting the direct reactions across entities..."
+    title: "Tracing ripples through time",
+    subtitle: "Projecting divergent outcomes and chronological shifts..."
   },
   {
-    title: "Engraving world state",
-    subtitle: "Updating the chronological blueprint of this universe..."
+    title: "Drafting reality blueprints",
+    subtitle: "Mapping dynamic character relationships and motivations..."
   },
   {
-    title: "Rendering cinematic echoes",
-    subtitle: "Synthesizing the atmospheric imagery and sensory data..."
+    title: "Rendering cinematic memory",
+    subtitle: "Weaving deep sensory details and ambient tones..."
   },
   {
     title: "Unfolding your destiny",
@@ -66,7 +66,7 @@ export function AtmosphericFateLoader({ genre }: AtmosphericFateLoaderProps) {
   useEffect(() => {
     const stageInterval = setInterval(() => {
       setStageIndex((prev) => (prev < STAGES.length - 1 ? prev + 1 : prev));
-    }, 2200);
+    }, 2000);
 
     return () => clearInterval(stageInterval);
   }, []);
@@ -77,10 +77,10 @@ export function AtmosphericFateLoader({ genre }: AtmosphericFateLoaderProps) {
       setProgress((prev) => {
         if (prev >= 100) return 100;
         // Slower progress as it nears 95% to maintain anticipation till network completes
-        const increment = prev < 60 ? 3 : prev < 85 ? 1.5 : 0.4;
+        const increment = prev < 50 ? 4 : prev < 80 ? 2 : 0.5;
         return Math.min(99, prev + increment);
       });
-    }, 100);
+    }, 120);
 
     return () => clearInterval(progressInterval);
   }, []);
@@ -89,34 +89,34 @@ export function AtmosphericFateLoader({ genre }: AtmosphericFateLoaderProps) {
     switch (genre) {
       case "romance":
         return {
-          bg: "bg-rose-950/20",
-          border: "border-rose-500/20",
-          glow: "shadow-rose-500/10",
+          bg: "bg-rose-950/25",
+          border: "border-rose-500/35",
+          glow: "shadow-rose-500/15",
           accentColor: "text-rose-400",
-          barColor: "bg-rose-500",
+          barColor: "bg-gradient-to-r from-rose-600 to-rose-400",
           icon: Compass,
-          label: "SENSORY COHERENCE"
+          label: "SENSORY COHERENCE CONNECTION"
         };
       case "crime":
         return {
-          bg: "bg-yellow-500/5",
-          border: "border-yellow-500/10",
-          glow: "shadow-yellow-500/5",
-          accentColor: "text-yellow-400",
-          barColor: "bg-yellow-500",
+          bg: "bg-zinc-950/40",
+          border: "border-amber-500/25",
+          glow: "shadow-amber-500/10",
+          accentColor: "text-amber-400",
+          barColor: "bg-gradient-to-r from-amber-600 to-amber-400",
           icon: Hourglass,
-          label: "CHRONOLOGY LOGS"
+          label: "CHRONOLOGY ECHO SYSTEM"
         };
       case "paranormal":
       default:
         return {
-          bg: "bg-purple-950/20",
-          border: "border-purple-500/20",
-          glow: "shadow-purple-500/10",
+          bg: "bg-purple-950/25",
+          border: "border-purple-500/35",
+          glow: "shadow-purple-500/15",
           accentColor: "text-purple-400",
-          barColor: "bg-purple-600",
+          barColor: "bg-gradient-to-r from-purple-600 to-purple-400",
           icon: Orbit,
-          label: "VEIL DISSOLUTION"
+          label: "VEIL DISSOLUTION EMULATOR"
         };
     }
   };
@@ -125,39 +125,39 @@ export function AtmosphericFateLoader({ genre }: AtmosphericFateLoaderProps) {
   const Icon = style.icon;
 
   return (
-    <div className={`p-6 md:p-8 rounded-[2rem] border min-h-[300px] flex flex-col justify-between items-center text-center transition-all ${style.bg} ${style.border} ${style.glow} shadow-2xl space-y-6 relative overflow-hidden`}>
+    <div className={`p-8 md:p-10 rounded-[2.5rem] border min-h-[350px] flex flex-col justify-between items-center text-center transition-all ${style.bg} ${style.border} ${style.glow} shadow-2xl space-y-8 relative overflow-hidden backdrop-blur-md`}>
       {/* Absolute faint animated background glows */}
-      <div className="absolute inset-0 bg-radial-gradient from-current/5 to-transparent blur-2xl -z-10 pointer-events-none" />
+      <div className="absolute inset-0 bg-radial-gradient from-current/5 to-transparent blur-3xl -z-10 pointer-events-none" />
 
       {/* Header Banner */}
-      <div className="space-y-1.5">
-        <span className="text-[9px] font-mono font-bold tracking-[0.4em] opacity-40 uppercase block">
+      <div className="space-y-2">
+        <span className="text-[10px] font-mono font-bold tracking-[0.4em] opacity-40 uppercase block">
           {style.label}
         </span>
         <div className="flex items-center justify-center gap-2">
-          <Loader2 className={`w-4.5 h-4.5 animate-spin ${style.accentColor}`} />
-          <h4 className="text-sm font-sans font-bold uppercase tracking-wider">
+          <Loader2 className={`w-5 h-5 animate-spin ${style.accentColor}`} />
+          <h4 className="text-sm font-sans font-extrabold uppercase tracking-widest text-white">
             Calculating Fate
           </h4>
         </div>
       </div>
 
       {/* Progressive Narrative disclosure center */}
-      <div className="space-y-4 max-w-sm w-full py-4">
+      <div className="space-y-5 max-w-sm w-full py-4 relative z-10">
         {/* Stages Animation */}
-        <div className="h-16 flex items-center justify-center">
+        <div className="h-20 flex items-center justify-center">
           <AnimatePresence mode="wait">
             <motion.div
               key={stageIndex}
-              initial={{ y: 15, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -15, opacity: 0 }}
-              className="space-y-1.5"
+              initial={{ y: 20, opacity: 0, filter: "blur(2px)" }}
+              animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+              exit={{ y: -20, opacity: 0, filter: "blur(2px)" }}
+              className="space-y-2"
             >
-              <div className={`text-sm font-serif font-black tracking-tight ${style.accentColor}`}>
+              <div className={`text-base font-serif font-black tracking-tight ${style.accentColor}`}>
                 {STAGES[stageIndex].title}...
               </div>
-              <p className="text-[11px] opacity-50 tracking-wide font-sans leading-relaxed">
+              <p className="text-[11px] opacity-60 tracking-wide font-sans leading-relaxed max-w-xs mx-auto text-gray-300">
                 {STAGES[stageIndex].subtitle}
               </p>
             </motion.div>
@@ -165,37 +165,39 @@ export function AtmosphericFateLoader({ genre }: AtmosphericFateLoaderProps) {
         </div>
 
         {/* Progress bar container */}
-        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden relative">
-          <div
-            className={`h-full rounded-full transition-all duration-300 ${style.barColor}`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <div className="flex items-center justify-between text-[9px] font-mono opacity-40 px-1">
-          <span>PROGRESS</span>
-          <span>{Math.round(progress)}%</span>
+        <div className="space-y-2">
+          <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden relative">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${style.barColor}`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[10px] font-mono opacity-50 px-1 text-gray-300">
+            <span>TEMPORAL INDEX</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
         </div>
       </div>
 
       {/* Flavor Lore / Atmospheric Quote Card */}
       {ambientQuote && (
-        <div className="p-4 rounded-xl bg-black/25 border border-white/5 max-w-md w-full relative">
+        <div className="p-4 rounded-2xl bg-black/40 border border-white/5 max-w-md w-full relative">
           <div className="absolute top-2 left-2 opacity-15">
             <Scroll className="w-4 h-4" />
           </div>
-          <p className="text-[10px] font-serif italic leading-relaxed opacity-70 px-4">
+          <p className="text-[10px] sm:text-[11px] font-serif italic leading-relaxed opacity-75 px-4 text-gray-100">
             &quot;{ambientQuote}&quot;
           </p>
         </div>
       )}
 
-      {/* Estimated wait time block */}
-      <div className="space-y-1">
-        <span className="text-[9px] font-mono opacity-30 uppercase tracking-widest block">
-          Estimated Generation: ~8-12 seconds
+      {/* Immersive Microcopy footer */}
+      <div className="pt-4 border-t border-white/5 w-full flex flex-col items-center space-y-1">
+        <span className={`text-[11px] font-serif italic font-bold tracking-wide ${style.accentColor}`}>
+          “Actions carry weight… some echoes take longer to fully form.”
         </span>
-        <span className="text-[9px] font-mono opacity-20 block">
-          This may take a moment for Gemini to weave richer atmospheric consequences.
+        <span className="text-[9px] font-mono opacity-30 text-gray-400">
+          Weaving a high-fidelity destiny with Gemini AI. Estimated generation: ~8-12 seconds
         </span>
       </div>
     </div>
