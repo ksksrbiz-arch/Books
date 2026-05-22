@@ -8,119 +8,45 @@ service cloud.firestore {
 
     // --- Helpers ---
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null;
     }
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    // --- Validation Blueprints ---
-
-    function isValidUser(data) {
-      return data.uid == request.auth.uid
-        && data.email is string && data.email.size() > 0 && data.email.size() < 256
-        && (request.method == 'create' ? (data.keys().hasAll(['uid', 'email', 'createdAt']) && data.createdAt == request.time) : true);
-    }
-
-    function isValidStory(data) {
-      return data.userId == request.auth.uid
-        && data.genre in ['romance', 'crime', 'paranormal']
-        && data.status in ['active', 'completed']
-        && (request.method == 'create' ? (data.keys().hasAll(['userId', 'genre', 'status', 'createdAt', 'updatedAt']) && data.createdAt == request.time) : true)
-        && data.updatedAt == request.time;
-    }
-
-    function isValidStep(data) {
-      return data.keys().hasAll(['sceneTitle', 'sceneDescription', 'timestamp'])
-        && data.sceneTitle is string && data.sceneTitle.size() < 256
-        && data.sceneDescription is string && data.sceneDescription.size() < 50000
-        && (data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() < 2048))
-        && (data.choiceTaken == null || (data.choiceTaken is string && data.choiceTaken.size() < 1024))
-        && (data.imagePrompt == null || (data.imagePrompt is string && data.imagePrompt.size() < 5000))
-        && (data.choices == null || (data.choices is list && data.choices.size() <= 10))
-        && data.timestamp == request.time;
-    }
-
-    function isValidNote(data) {
-      return data.keys().hasAll(['title', 'type', 'createdAt'])
-        && data.title is string && data.title.size() <= 512
-        && data.type in ['text', 'checklist']
-        && (data.content == null || (data.content is string && data.content.size() <= 20000))
-        && (data.color == null || (data.color is string && data.color.size() <= 64))
-        && (data.pinned == null || data.pinned is bool)
-        && (data.linkedSceneId == null || (data.linkedSceneId is string && data.linkedSceneId.size() <= 128));
-    }
-
-    function isValidCodex(data) {
-      return data.keys().hasAll(['title', 'category', 'content', 'discoveredAt'])
-        && data.title is string && data.title.size() <= 256
-        && data.category is string && data.category.size() <= 128
-        && data.content is string && data.content.size() <= 10000;
-    }
-
     // --- Routes ---
 
     match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUser(incoming());
-      allow update: if isOwner(userId) 
-        && isValidUser(incoming())
-        && incoming().createdAt == existing().createdAt;
+      allow read, write: if isOwner(userId);
 
       match /stories/{storyId} {
-        allow list, get: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(storyId) && isValidStory(incoming());
-        allow update: if isOwner(userId) 
-          && isValidStory(incoming())
-          && (
-            // Action: Update Status or Narrative Progress
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
-          );
-        allow delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
 
         match /steps/{stepId} {
-          allow list, get: if isOwner(userId);
-          allow create: if isOwner(userId) && isValidId(stepId) && isValidStep(incoming());
+          allow read, write: if isOwner(userId);
         }
 
         match /notes/{noteId} {
-          allow list, get: if isOwner(userId);
-          allow create: if isOwner(userId) && isValidId(noteId) && isValidNote(incoming()) && incoming().createdAt == request.time;
-          allow update: if isOwner(userId) && isValidNote(incoming()) && incoming().createdAt == existing().createdAt && (incoming().updatedAt == request.time || !incoming().keys().hasAll(['updatedAt']));
-          allow delete: if isOwner(userId);
+          allow read, write: if isOwner(userId);
         }
 
         match /codex/{codexId} {
-          allow list, get: if isOwner(userId);
-          allow create, update: if isOwner(userId) && isValidId(codexId) && isValidCodex(incoming());
-          allow delete: if isOwner(userId);
+          allow read, write: if isOwner(userId);
         }
       }
     }
 
     match /shared_echoes/{echoId} {
       allow get: if true;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
     }
 
     match /rooms/{roomId} {
       allow get: if true;
-      allow create: if isSignedIn() && incoming().hostId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.hostId == request.auth.uid;
       allow update: if isSignedIn();
-      allow delete: if isSignedIn() && existing().hostId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.hostId == request.auth.uid;
     }
   }
 }

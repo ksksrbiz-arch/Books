@@ -564,7 +564,8 @@ function generateProceduralFallback(params: {
 }
 
 app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
-  const { genre, ignoreCache } = req.body;
+  const genre = typeof req.body?.genre === 'string' ? req.body.genre.trim() : "mystery";
+  const ignoreCache = !!req.body?.ignoreCache;
   
   const cacheKey = getCacheKey("premise", { genre });
   if (!ignoreCache) {
@@ -639,9 +640,43 @@ app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
   }
 });
 
+function isSafeUrl(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    // Block common private network subnets, localhost, and link-local segment (SSRF prevention)
+    if (
+      hostname === 'localhost' ||
+      hostname === 'localhost.localdomain' ||
+      hostname === '0.0.0.0' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1' ||
+      hostname === '169.254.169.254' ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('127.') ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)
+    ) {
+      return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 app.get("/api/proxy-audio", async (req, res) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).send("No URL provided");
+  
+  if (!isSafeUrl(url)) {
+    console.error(`[Security Warning]: Terminated SSRF attempt targeting audio proxy: ${url}`);
+    return res.status(400).send("Access to local or private resource ranges is prohibited.");
+  }
+
   try {
     const response = await fetch(url);
     if (!response.ok) return res.status(response.status).send(`Failed to fetch: ${response.statusText}`);
@@ -662,13 +697,15 @@ app.get("/api/proxy-audio", async (req, res) => {
 
 // High-Fidelity Human-Like Text-to-Speech API (ElevenLabs + OpenAI TTS + Google Parallel Chunk Fallback)
 app.get("/api/story/tts", rateLimitingMiddleware, async (req, res) => {
-  const text = req.query.text as string;
-  if (!text) {
-    return res.status(400).send("No text provided");
+  const rawText = req.query.text;
+  if (!rawText || typeof rawText !== "string") {
+    return res.status(400).send("No valid text provided");
   }
+  // Hardened string truncation cap to prevent excessive chunking streams
+  const text = rawText.trim().substring(0, 1200);
 
-  const gender = (req.query.gender as string) || "neutral";
-  const voice = (req.query.voice as string) || "google_assistant";
+  const gender = typeof req.query.gender === "string" ? req.query.gender : "neutral";
+  const voice = typeof req.query.voice === "string" ? req.query.voice : "google_assistant";
 
   try {
     // 1. ELEVENLABS PRESETS (If requested and API Key is active)
@@ -793,9 +830,16 @@ app.get("/api/story/tts", rateLimitingMiddleware, async (req, res) => {
 
 // API routes
 app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
-  const { genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis } = req.body;
+  const genre = typeof req.body?.genre === 'string' ? req.body.genre.trim() : "mystery";
+  const storyLength = typeof req.body?.storyLength === 'string' ? req.body.storyLength.trim() : "medium";
+  const characterArchetype = typeof req.body?.characterArchetype === 'string' ? req.body.characterArchetype.trim() : "unknown";
+  const backstory = typeof req.body?.backstory === 'string' ? req.body.backstory.trim() : "To be discovered";
+  const plotComplexity = typeof req.body?.plotComplexity === 'string' ? req.body.plotComplexity.trim() : "complex";
+  const tone = typeof req.body?.tone === 'string' ? req.body.tone.trim() : "intense";
+  const isAdultContent = !!req.body?.isAdultContent;
+  const customBasis = typeof req.body?.customBasis === 'string' ? req.body.customBasis.trim() : "";
   
-  const cacheKey = getCacheKey("start", req.body);
+  const cacheKey = getCacheKey("start", { genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis });
   const cached = apiCache.get(cacheKey);
   if (cached) {
     console.log("Cache hit for story start");
@@ -876,7 +920,26 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
 });
 
 app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
-  const { 
+  const history = Array.isArray(req.body?.history) ? req.body.history : [];
+  const choice = req.body?.choice && typeof req.body.choice === 'object' ? req.body.choice : { text: "Investigate further", nextContext: "investigate_noise" };
+  const genre = typeof req.body?.genre === 'string' ? req.body.genre.trim() : "mystery";
+  const storyLength = typeof req.body?.storyLength === 'string' ? req.body.storyLength.trim() : "medium";
+  const characterArchetype = typeof req.body?.characterArchetype === 'string' ? req.body.characterArchetype.trim() : "unknown";
+  const backstory = typeof req.body?.backstory === 'string' ? req.body.backstory.trim() : "To be discovered";
+  const plotComplexity = typeof req.body?.plotComplexity === 'string' ? req.body.plotComplexity.trim() : "complex";
+  const tone = typeof req.body?.tone === 'string' ? req.body.tone.trim() : "intense";
+  const isAdultContent = !!req.body?.isAdultContent;
+  const customBasis = typeof req.body?.customBasis === 'string' ? req.body.customBasis.trim() : "";
+  const relationships = req.body?.relationships && typeof req.body.relationships === 'object' ? req.body.relationships : {};
+  const storyMilestones = Array.isArray(req.body?.storyMilestones) ? req.body.storyMilestones : [];
+  const consequences = req.body?.consequences && typeof req.body.consequences === 'object' ? req.body.consequences : {};
+  const isFinalChoice = !!req.body?.isFinalChoice;
+  const customTwist = typeof req.body?.customTwist === 'string' ? req.body.customTwist.trim() : "";
+  const simulationMode = typeof req.body?.simulationMode === 'string' ? req.body.simulationMode.trim() : "standard";
+  const isWhatIfMode = !!req.body?.isWhatIfMode;
+  
+  const mode = simulationMode || "standard";
+  const cacheKey = getCacheKey("continue", {
     history, 
     choice, 
     genre, 
@@ -892,25 +955,22 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     consequences, 
     isFinalChoice, 
     customTwist,
-    simulationMode,      // "light" | "standard" | "deep"
-    isWhatIfMode         // Alternate experimental timeline boolean
-  } = req.body;
-  
-  const mode = simulationMode || "standard";
-  const cacheKey = getCacheKey("continue", req.body);
+    simulationMode,
+    isWhatIfMode
+  });
   const cached = apiCache.get(cacheKey);
   if (cached) {
     console.log("Cache hit for story continue");
     return res.json(cached);
   }
-
-  // Optimize history depth based on selected Fate Simulation Mode (Cost & Context bounds)
-  let historySlice = history;
-  if (mode === "light") {
-    historySlice = history.slice(-1); // Only pass absolute last scene for extreme speed/cost reduction
-  } else if (mode === "standard") {
-    historySlice = history.slice(-3); // Balance context window perfectly
-  } // "deep" retains full history slice
+ 
+   // Optimize history depth based on selected Fate Simulation Mode (Cost & Context bounds)
+   let historySlice = history;
+   if (mode === "light") {
+     historySlice = history.slice(-1); // Only pass absolute last scene for extreme speed/cost reduction
+   } else if (mode === "standard") {
+     historySlice = history.slice(-3); // Balance context window perfectly
+   } // "deep" retains full history slice
 
   const systemInstruction = `
     You are the Destiny Chronicle Engine, an elite master storyteller and narrative designer. Continue the interactive story based on the user's choice, active parameters, and historical choices.
@@ -1880,6 +1940,15 @@ app.get("/api/story/async-job/:id", (req, res) => {
     return res.status(404).json({ error: "No such async task found in the executor system." });
   }
   res.json(status);
+});
+
+// Global Error Handling Middleware (Production Hardening & Crash Shield)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("[Uncaught Express Exception]:", err);
+  res.status(500).json({
+    error: "A critical internal processing exception has occurred. Safe recovery state loaded.",
+    message: process.env.NODE_ENV === "production" ? "System undergoes automated continuous restoration." : err.message
+  });
 });
 
 // Vite middleware setup

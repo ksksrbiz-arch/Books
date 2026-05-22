@@ -69,20 +69,52 @@ export interface OfflineQueueItem {
   timestamp: number;
 }
 
+let cachedChaosState: any = null;
+let lastChaosFetchTime = 0;
+
+async function checkChaosOutage(): Promise<boolean> {
+  const now = Date.now();
+  if (now - lastChaosFetchTime < 10000 && cachedChaosState !== null) {
+    return !!cachedChaosState.simulateDbOutage;
+  }
+  try {
+    const response = await fetch("/api/system/monitoring");
+    if (response.ok) {
+      const stats = await response.json();
+      cachedChaosState = stats.chaosState || { simulateDbOutage: false };
+      lastChaosFetchTime = now;
+      return !!cachedChaosState.simulateDbOutage;
+    }
+  } catch (err) {
+    // If request fails, default to healthy status
+  }
+  return false;
+}
+
 export async function setDocSafe(docRef: any, data: any, options?: any): Promise<boolean> {
   try {
     // If simulated DB outage is active, fail immediately to test the failover gracefully
-    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
-    if (checkOutageResponse && checkOutageResponse.ok) {
-      const stats = await checkOutageResponse.json();
-      if (stats.chaosState?.simulateDbOutage) {
-        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
-      }
+    if (await checkChaosOutage()) {
+      throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
     }
     if (options) {
       await setDoc(docRef, data, options);
     } else {
       await setDoc(docRef, data);
+    }
+    
+    // Clear individual doc cache with freshest data
+    const path = docRef.path;
+    localStorage.setItem(`local_cache_doc:${path}`, JSON.stringify(data));
+
+    // Restore online state dynamically if outstanding queue is empty
+    const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem("offline_echoes_sync") || "[]");
+    if (queue.length > 0) {
+      await flushOfflineQueueSync();
+    } else {
+      window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+        detail: { status: "online", message: "" }
+      }));
     }
     return true;
   } catch (err) {
@@ -114,14 +146,30 @@ export async function setDocSafe(docRef: any, data: any, options?: any): Promise
 
 export async function addDocSafe(colRef: any, data: any): Promise<any> {
   try {
-    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
-    if (checkOutageResponse && checkOutageResponse.ok) {
-      const stats = await checkOutageResponse.json();
-      if (stats.chaosState?.simulateDbOutage) {
-        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
-      }
+    if (await checkChaosOutage()) {
+      throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
     }
     const docRefResolved = await addDoc(colRef, data);
+
+    // Warm up the collection query list cache index optimistically
+    const path = colRef.path;
+    const listCacheKey = `local_cache_list:${path}`;
+    const cachedList = JSON.parse(localStorage.getItem(listCacheKey) || "[]");
+    cachedList.push({ id: docRefResolved.id, ...data });
+    localStorage.setItem(listCacheKey, JSON.stringify(cachedList));
+
+    // Clear individual doc cache with freshest data
+    localStorage.setItem(`local_cache_doc:${path}/${docRefResolved.id}`, JSON.stringify(data));
+
+    // Restore online state dynamically if outstanding queue is empty
+    const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem("offline_echoes_sync") || "[]");
+    if (queue.length > 0) {
+      await flushOfflineQueueSync();
+    } else {
+      window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+        detail: { status: "online", message: "" }
+      }));
+    }
     return docRefResolved;
   } catch (err) {
     console.warn("addDoc failed, saving to local offline cache:", err);
@@ -205,12 +253,8 @@ function getRefPath(ref: any): string | null {
 
 export async function getDocSafe(docRef: any): Promise<any> {
   try {
-    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
-    if (checkOutageResponse && checkOutageResponse.ok) {
-      const stats = await checkOutageResponse.json();
-      if (stats.chaosState?.simulateDbOutage) {
-        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
-      }
+    if (await checkChaosOutage()) {
+      throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
     }
     const docSnap = await getDoc(docRef);
     if (docSnap && typeof docSnap.exists === "function" && docSnap.exists()) {
@@ -259,12 +303,8 @@ export async function getDocSafe(docRef: any): Promise<any> {
 
 export async function getDocsSafe(queryOrColRef: any): Promise<any> {
   try {
-    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
-    if (checkOutageResponse && checkOutageResponse.ok) {
-      const stats = await checkOutageResponse.json();
-      if (stats.chaosState?.simulateDbOutage) {
-        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
-      }
+    if (await checkChaosOutage()) {
+      throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
     }
     const snapshot = await getDocs(queryOrColRef);
     const path = getRefPath(queryOrColRef);

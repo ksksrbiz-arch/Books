@@ -85,6 +85,9 @@ const IntroductionParticles = lazy(() =>
 );
 import { ImageFallbackContainer } from "./components/ImageFallbackContainer";
 import OnboardingTutorial from "./components/OnboardingTutorial";
+import genreRomanceImg from "./assets/images/genre_romance_card_1779164930713.png";
+import genreCrimeImg from "./assets/images/genre_crime_card_1779164947927.png";
+import genreParanormalImg from "./assets/images/genre_paranormal_card_1779164962472.png";
 import { RelationshipMeter } from "./components/RelationshipMeter";
 import { BranchingTimeline } from "./components/BranchingTimeline";
 import { GoogleKeepWorkspace } from "./components/GoogleKeepWorkspace";
@@ -3866,7 +3869,7 @@ function App() {
                   className="group relative flex-1 aspect-[10/13] bg-[#FCF8F8] border border-rose-100/50 rounded-3xl overflow-hidden shadow-2xl hover:shadow-rose-100 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
-                    src="/src/assets/images/genre_romance_card_1779164930713.png"
+                    src={genreRomanceImg}
                     className="absolute inset-0 w-full h-full object-cover opacity-30 group-hover:opacity-60 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none mix-blend-multiply"
                     alt="Romance"
                     loading="lazy"
@@ -3891,7 +3894,7 @@ function App() {
                   className="group relative flex-1 aspect-[10/13] bg-[#0A0C10] border border-white/5 rounded-3xl overflow-hidden shadow-2xl hover:shadow-white/5 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
-                    src="/src/assets/images/genre_crime_card_1779164947927.png"
+                    src={genreCrimeImg}
                     className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-40 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none grayscale"
                     alt="Crime"
                     loading="lazy"
@@ -3916,7 +3919,7 @@ function App() {
                   className="group relative flex-1 aspect-[10/13] bg-[#0D0A14] border border-purple-500/10 rounded-3xl overflow-hidden shadow-2xl hover:shadow-purple-900/30 transition-all duration-700 transform hover:-translate-y-2 flex flex-col justify-end p-10 text-left"
                 >
                   <img
-                    src="/src/assets/images/genre_paranormal_card_1779164962472.png"
+                    src={genreParanormalImg}
                     className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-50 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none"
                     alt="Paranormal"
                     loading="lazy"

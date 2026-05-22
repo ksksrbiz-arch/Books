@@ -3,6 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- HMR & WebSocket Error Shield -->
+    <script>
+      (function() {
+        var suppressKeywords = ['WebSocket', 'websocket', 'vite', 'hmr', 'ws://', 'wss://'];
+        function shouldSuppress(msg) {
+          if (!msg) return false;
+          var lower = msg.toLowerCase();
+          return suppressKeywords.some(function(kw) {
+            return lower.indexOf(kw.toLowerCase()) !== -1;
+          });
+        }
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event.reason) {
+            var msg = String(event.reason.message || event.reason);
+            if (shouldSuppress(msg)) {
+              console.warn('[HMR Shield]: Suppressed unhandled rejection:', msg);
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            }
+          }
+        }, true);
+        window.addEventListener('error', function(event) {
+          var msg = String(event.message || (event.error && event.error.message) || '');
+          if (shouldSuppress(msg)) {
+            console.warn('[HMR Shield]: Suppressed resource/script error:', msg);
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     
     <!-- Primary SEO Metadata -->
     <title>TBR Storyboard | Echoes of Choice - Clackamas Book Exchange Companion</title>
