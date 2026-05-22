@@ -20,17 +20,19 @@ import {
   Fingerprint,
   Heart,
   Scroll,
-  Dna
+  Dna,
+  RefreshCw,
+  Star
 } from "lucide-react";
 import {
   db,
   auth,
+  setDocSafe as setDoc,
+  addDocSafe as addDoc
 } from "../lib/firebase";
 import {
   collection,
   doc,
-  setDoc,
-  addDoc,
   deleteDoc,
   onSnapshot,
   query,
@@ -256,6 +258,46 @@ export function CodexLoreGlossary({
   };
 
   const themeConfig = getThemeConfig();
+
+  const getStatusStyling = (status: CodexEntry["status"]) => {
+    const isRomance = genre === "romance";
+    switch (status) {
+      case "updated":
+        return {
+          label: "Updated",
+          icon: <RefreshCw className="w-3 h-3 text-amber-500 animate-[spin_4s_linear_infinite]" />,
+          badgeClass: isRomance 
+            ? "bg-amber-100/95 text-amber-800 border-amber-200/60" 
+            : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+          cardClass: isRomance
+            ? "bg-amber-50/10 hover:bg-amber-50/30 border-amber-200 hover:border-amber-400 shadow-sm shadow-amber-100/30 text-rose-900"
+            : "bg-yellow-950/10 hover:bg-yellow-950/20 border-yellow-500/20 hover:border-yellow-500/40 shadow-sm shadow-black text-zinc-100"
+        };
+      case "revealed":
+        return {
+          label: "Recently Revealed",
+          icon: <Star className="w-3 h-3 text-blue-400 fill-blue-400/20 animate-pulse" />,
+          badgeClass: isRomance 
+            ? "bg-blue-100/95 text-blue-800 border-blue-200/60" 
+            : "bg-blue-500/10 text-blue-400 border-blue-500/20",
+          cardClass: isRomance
+            ? "bg-blue-50/10 hover:bg-blue-50/30 border-blue-200 hover:border-blue-400 shadow-sm shadow-blue-100/30 text-rose-900"
+            : "bg-blue-950/10 hover:bg-blue-950/20 border-blue-500/20 hover:border-blue-500/40 shadow-sm shadow-black text-zinc-100"
+        };
+      case "discovered":
+      default:
+        return {
+          label: "Discovered",
+          icon: <Check className="w-3 h-3 text-emerald-500 font-bold" />,
+          badgeClass: isRomance 
+            ? "bg-emerald-100/95 text-emerald-800 border-emerald-200/60" 
+            : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+          cardClass: isRomance
+            ? "bg-emerald-50/10 hover:bg-emerald-50/30 border-emerald-200 hover:border-emerald-400 shadow-sm shadow-emerald-100/30 text-rose-900"
+            : "bg-emerald-950/10 hover:bg-emerald-950/20 border-emerald-500/10 hover:border-emerald-500/30 shadow-sm shadow-black text-zinc-100"
+        };
+    }
+  };
 
   // Helper icons for categories
   const getCategoryIcon = (category: string) => {
@@ -503,70 +545,90 @@ export function CodexLoreGlossary({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <AnimatePresence mode="popLayout">
-                {filteredEntries.map((entry) => (
-                  <motion.div
-                    key={entry.id}
-                    layoutId={entry.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.2 }}
-                    className={`flex flex-col p-5 rounded-2xl border transition-all hover:scale-[1.01] hover:-translate-y-1 relative group ${themeConfig.cardBg}`}
-                  >
-                    <div className="flex justify-between items-start gap-2 mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-black/10 rounded-lg">
-                          {getCategoryIcon(entry.category)}
+                {filteredEntries.map((entry) => {
+                  const statusInfo = getStatusStyling(entry.status || "discovered");
+                  return (
+                    <motion.div
+                      key={entry.id}
+                      layoutId={entry.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ duration: 0.2 }}
+                      className={`flex flex-col p-5 rounded-2xl border transition-all hover:scale-[1.01] hover:-translate-y-1 relative group ${statusInfo.cardClass}`}
+                    >
+                      <div className="flex justify-between items-start gap-2 mb-3">
+                        <div className="flex flex-col xl:flex-row xl:items-center gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-black/10 rounded-lg">
+                              {getCategoryIcon(entry.category)}
+                            </div>
+                            <span className="text-[10px] uppercase font-black tracking-wider opacity-60">
+                              {entry.category}
+                            </span>
+                          </div>
+                          {/* Rich visual state badge */}
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[8px] font-bold uppercase tracking-wider w-fit ${statusInfo.badgeClass}`}>
+                            {statusInfo.icon}
+                            <span>{statusInfo.label}</span>
+                          </span>
                         </div>
-                        <span className="text-[10px] uppercase font-black tracking-wider opacity-60">
-                          {entry.category}
+
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
+                          <button
+                            onClick={() => startEdit(entry)}
+                            className="p-1 bg-current/[0.05] hover:bg-current/[0.15] text-current rounded-lg transition-colors"
+                            title="Edit Entry"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(entry.id)}
+                            className="p-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded-lg transition-all"
+                            title="Delete Entry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <h3 className="font-sans font-black tracking-tight text-lg mb-2">
+                        {entry.title}
+                      </h3>
+
+                      <div className="text-sm opacity-80 flex-1 leading-relaxed font-serif markdown-body prose prose-invert overflow-auto">
+                        <Markdown>{entry.content}</Markdown>
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-current/5 flex justify-between items-center text-[10px] opacity-50 font-medium">
+                        <span className="truncate max-w-[150px]" title={entry.sourceScene}>
+                          📍 {entry.sourceScene || "Undetermined"}
+                        </span>
+                        <span>
+                          {new Date(entry.discoveredAt).toLocaleDateString()}
                         </span>
                       </div>
 
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
-                        <button
-                          onClick={() => startEdit(entry)}
-                          className="p-1 bg-current/[0.05] hover:bg-current/[0.15] text-current rounded-lg transition-colors"
-                          title="Edit Entry"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(entry.id)}
-                          className="p-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded-lg transition-all"
-                          title="Delete Entry"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <h3 className="font-sans font-black tracking-tight text-lg mb-2">
-                      {entry.title}
-                    </h3>
-
-                    <div className="text-sm opacity-80 flex-1 leading-relaxed font-serif markdown-body prose prose-invert overflow-auto">
-                      <Markdown>{entry.content}</Markdown>
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-current/5 flex justify-between items-center text-[10px] opacity-50 font-medium">
-                      <span className="truncate max-w-[150px]" title={entry.sourceScene}>
-                        📍 {entry.sourceScene || "Undetermined"}
+                      {/* Accent corner blinking status beacon */}
+                      <span className="absolute top-3.5 right-3.5 flex h-2 w-2">
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          entry.status === "updated" 
+                            ? "bg-yellow-400" 
+                            : entry.status === "revealed" 
+                            ? "bg-blue-400" 
+                            : "bg-emerald-400"
+                        }`}></span>
+                        <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                          entry.status === "updated" 
+                            ? "bg-yellow-500" 
+                            : entry.status === "revealed" 
+                            ? "bg-blue-500" 
+                            : "bg-emerald-500"
+                        }`}></span>
                       </span>
-                      <span>
-                        {new Date(entry.discoveredAt).toLocaleDateString()}
-                      </span>
-                    </div>
-
-                    {/* Status badges */}
-                    {entry.status === "updated" && (
-                      <span className="absolute top-3 right-3 flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                      </span>
-                    )}
-                  </motion.div>
-                ))}
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
 
               {filteredEntries.length === 0 && (

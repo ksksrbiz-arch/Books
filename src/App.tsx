@@ -86,10 +86,8 @@ import { CodexLoreGlossary } from "./components/CodexLoreGlossary";
 import { BookOpen } from "lucide-react";
 import {
   doc,
-  setDoc,
   getDoc,
   collection,
-  addDoc,
   deleteDoc,
   query,
   where,
@@ -99,6 +97,7 @@ import {
   serverTimestamp,
   limit,
 } from "firebase/firestore";
+import { setDocSafe as setDoc, addDocSafe as addDoc } from "./lib/firebase";
 
 interface Choice {
   text: string;
@@ -286,6 +285,21 @@ function App() {
   const [showCodex, setShowCodex] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
+  const [syncStatus, setSyncStatus] = useState<{ status: "online" | "offline_active" | "online_synced"; message: string }>({ status: "online", message: "" });
+
+  useEffect(() => {
+    const handleSyncStatus = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setSyncStatus(detail);
+      if (detail.status === "online_synced") {
+        setTimeout(() => {
+          setSyncStatus(prev => prev.status === "online_synced" ? { status: "online", message: "" } : prev);
+        }, 4000);
+      }
+    };
+    window.addEventListener("firestore_sync_status", handleSyncStatus);
+    return () => window.removeEventListener("firestore_sync_status", handleSyncStatus);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -566,10 +580,15 @@ function App() {
             // 3. Append the alternate timeline nodes
             for (let i = 0; i < restoredReality.steps.length; i++) {
               const step = restoredReality.steps[i];
+              const cleanUrl = await ensureCompactImageUrl(
+                step.imageUrl,
+                step.imagePrompt || step.sceneTitle || "",
+                step.mood || "mystery"
+              );
               await addDoc(stepsRef, {
                 sceneTitle: step.sceneTitle,
                 sceneDescription: step.sceneDescription,
-                imageUrl: step.imageUrl || null,
+                imageUrl: cleanUrl || null,
                 videoUrl: step.videoUrl || null,
                 choiceTaken: step.choiceTaken || null,
                 choices: step.choices || [],
@@ -1155,6 +1174,32 @@ function App() {
     }
   };
 
+  const ensureCompactImageUrl = async (
+    url: string | null | undefined,
+    prompt: string = "",
+    mood: string = "mystery",
+  ): Promise<string | null> => {
+    if (!url) return null;
+    if (url.startsWith("data:image/") && url.length > 5000) {
+      try {
+        const res = await fetch("/api/story/cache-base64", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64: url, prompt, mood, genre }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.imageUrl) {
+            return data.imageUrl;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to automatically minimize and cache base64 image", err);
+      }
+    }
+    return url;
+  };
+
   const generateMedia = async (
     prompt: string,
     mood: string,
@@ -1496,6 +1541,36 @@ function App() {
           isMuted={settings.isMuted}
         />
       </Suspense>
+
+      <AnimatePresence>
+        {syncStatus.status !== "online" && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 right-6 z-[1000] flex items-center gap-2 px-4 py-2.5 rounded-full shadow-lg border backdrop-blur-md"
+            style={{
+              backgroundColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
+              borderColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.3)" : "rgba(16, 185, 129, 0.3)",
+              color: syncStatus.status === "offline_active" ? "#ef4444" : "#10b981",
+            }}
+          >
+            {syncStatus.status === "offline_active" ? (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+              </span>
+            ) : (
+              <span className="relative flex h-2 w-2">
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            )}
+            <span className="text-xs font-mono font-medium tracking-wide">
+              {syncStatus.message}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showTutorial && (

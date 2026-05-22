@@ -28,13 +28,13 @@ import {
   db,
   auth,
   OperationType,
-  handleFirestoreError
+  handleFirestoreError,
+  setDocSafe as setDoc,
+  addDocSafe as addDoc
 } from "../lib/firebase";
 import {
   collection,
   doc,
-  setDoc,
-  addDoc,
   deleteDoc,
   onSnapshot,
   query,
