@@ -1157,10 +1157,35 @@ app.post("/api/story/video/status", async (req, res) => {
 });
 
 app.post("/api/story/keep-assist", async (req, res) => {
-  const { noteContent, action, title, noteType } = req.body;
+  const { noteContent, action, title, noteType, sceneTitle, sceneDescription, genre } = req.body;
   try {
     let promptText = "";
-    if (action === "expand") {
+    let useSchema = false;
+
+    if (action === "generate-starter") {
+      useSchema = true;
+      promptText = `Based on the following active story scene setting and current genre ("${genre || "mystery"}"), generate exactly 3 highly detailed, creative writer's helper cards to populate their Google Keep outline board.
+      
+      Scene Settings:
+      Title: "${sceneTitle || ""}"
+      Description: "${sceneDescription || ""}"
+      
+      Return a JSON array of exactly 3 cards, each with:
+      - title: (string) A captivating, genre-fitting title (e.g. "Maya's Reluctance" or "Midnight Echo Tracklist")
+      - content: (string) Detailed writer outline guidelines, clues, secrets, or backstory
+      - type: (string) either "text" or "checklist"
+      - listItems: (array of strings, ONLY if type is "checklist") A list of 3-4 subtasks or plot checkpoints
+      - color: (string) One of these preset styles:
+         - "bg-yellow-500/10 border-yellow-500/30 text-yellow-100" (Yellow note)
+         - "bg-rose-500/10 border-rose-500/30 text-rose-100" (Rose/Red note)
+         - "bg-purple-500/10 border-purple-500/30 text-purple-100" (Lavender/Purple note)
+         - "bg-teal-500/10 border-teal-500/30 text-teal-100" (Teal/Blue-Green note)
+         - "bg-sky-500/10 border-sky-500/30 text-sky-100" (Sky/Blue note)
+      - labels: (array of strings) Choose 1 or 2 from: ["Outline", "Character", "Plot Twist", "Worldbuilding", "Reference"]
+      
+      Output ONLY valid JSON matching this schema description.
+      `;
+    } else if (action === "expand") {
       promptText = `Expand the following story brainstorm idea into a structured outline or character profile detailed note. Avoid introductory phrases, answer directly in raw markdown or clear bullet points.
 Idea title: "${title || 'Untitled Book Outline'}"
 Note type: ${noteType || 'text'}
@@ -1179,12 +1204,43 @@ Title: "${title || 'Note'}"
 Content: "${noteContent || ''}"`;
     }
 
+    const config: any = {};
+    if (useSchema) {
+      config.responseMimeType = "application/json";
+      config.responseSchema = {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            content: { type: Type.STRING },
+            type: { type: Type.STRING, enum: ["text", "checklist"] },
+            listItems: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
+            color: { type: Type.STRING },
+            labels: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
+          },
+          required: ["title", "content", "type", "color", "labels"]
+        }
+      };
+    }
+
     const response = await callGeminiWithRetry(() => getAI().models.generateContent({
       model: "gemini-2.5-flash",
       contents: promptText,
+      config: config
     }));
 
-    res.json({ text: response.text });
+    if (useSchema) {
+      res.json(JSON.parse(response.text || "[]"));
+    } else {
+      res.json({ text: response.text });
+    }
   } catch (error: any) {
     console.error("Error in keep-assist:", error);
     res.status(500).json({ error: error.message });
@@ -1218,6 +1274,78 @@ app.post("/api/story/video/download", async (req, res) => {
   } catch (error: any) {
     console.error("Error downloading video:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+const CompanionConverseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    speaker: { type: Type.STRING, description: "Who is speaking, either 'Narrator' or an NPC name." },
+    text: { type: Type.STRING, description: "The response spoken back to the user. Keep it brief and evocative." },
+    mood: { type: Type.STRING, description: "Descriptive mood of the delivery (e.g., quiet, sarcastic, flirty)." }
+  },
+  required: ["speaker", "text", "mood"]
+};
+
+app.post("/api/story/converse", rateLimitingMiddleware, async (req, res) => {
+  const { sceneTitle, sceneDescription, userMessage, genre, relationships } = req.body;
+
+  try {
+    const systemInstruction = `
+      You are the Story Guide and Companion conversational agent inside an interactive branching-narrative browser game.
+      The current genre is: ${genre || "mystery"}.
+      The player is directly conversing with the narrative scene, questioning details, or speaking to figures in the environment in real-time.
+      
+      CURRENT SCENE CONTEXT:
+      Title: "${sceneTitle || ""}"
+      Description (use this context to understand who/what is present): 
+      "${sceneDescription || ""}"
+      
+      NPC KEY RELATIONSHIPS AND AFFINITIES:
+      ${JSON.stringify(relationships || {})}
+
+      DIRECTIVES:
+      1. Decide who is speaking based on what the user said or asked.
+         - Choose "Narrator" if the player is investigating the environment, checking the scene layout, asking about clues/lore, or asking what happened next.
+         - Choose an actual NPC's name (either mentioned in the story text or matching one of the keys in relationships, e.g. "Maya", "The Enigmatic Designer", "Director Vance") if the player is addressing them, trying to speak to someone nearby, or if they would reasonably interject/react.
+      2. Write a highly atmospheric, captivating response: exactly 1-2 sentences. Keep it immersive and inside the style and prose of the genre (${genre}).
+      3. Never break the fourth wall. Do NOT mention you are an AI model. Speak directly to the player in character.
+      4. Avoid repetitive or dry responses. Match the emotional tone requested or implied.
+      
+      Format output directly in JSON with fields 'speaker', 'text', and 'mood'.
+    `;
+
+    const prompt = `
+      The player says/asks or does: "${userMessage}"
+      
+      Generate the reaction.
+    `;
+
+    const response = await callGeminiWithRetry(() => getAI().models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        temperature: 0.8,
+        responseMimeType: "application/json",
+        responseSchema: CompanionConverseSchema
+      }
+    }));
+
+    const responseText = response.text;
+    if (!responseText) {
+      throw new Error("Empty response from Gemini for companion converse.");
+    }
+
+    const data = JSON.parse(responseText);
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error in companion converse API:", error);
+    res.json({
+      speaker: "Narrator",
+      text: "The whispers of the scene pool around you, but the specifics remain obscured in the haze.",
+      mood: "ominous"
+    });
   }
 });
 

@@ -194,16 +194,132 @@ export async function flushOfflineQueueSync(): Promise<{ succeeded: number; fail
   return { succeeded, failed };
 }
 
+// Transparent Client-Side Offline-Resilient Read/Fetch Architecture
+function getRefPath(ref: any): string | null {
+  if (!ref) return null;
+  if (typeof ref.path === 'string') return ref.path;
+  if (ref._query && ref._query.path) return ref._query.path.toString();
+  if (ref.query && ref.query.path) return ref.query.path.toString();
+  return null;
+}
+
+export async function getDocSafe(docRef: any): Promise<any> {
+  try {
+    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
+    if (checkOutageResponse && checkOutageResponse.ok) {
+      const stats = await checkOutageResponse.json();
+      if (stats.chaosState?.simulateDbOutage) {
+        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
+      }
+    }
+    const docSnap = await getDoc(docRef);
+    if (docSnap && typeof docSnap.exists === "function" && docSnap.exists()) {
+      const path = getRefPath(docRef);
+      if (path) {
+        localStorage.setItem(`local_cache_doc:${path}`, JSON.stringify({
+          id: docSnap.id,
+          ...(docSnap.data() as any)
+        }));
+      }
+    }
+    return docSnap;
+  } catch (err: any) {
+    console.warn("getDoc failed, seeking local offline fallback:", err);
+    
+    const path = getRefPath(docRef);
+    if (path) {
+      const cachedDataStr = localStorage.getItem(`local_cache_doc:${path}`);
+      if (cachedDataStr) {
+        const data = JSON.parse(cachedDataStr);
+        return {
+          id: data.id || docRef.id,
+          ref: docRef,
+          exists: () => true,
+          data: () => {
+            const { id, ...rest } = data;
+            return rest;
+          }
+        };
+      }
+    }
+    
+    const isOffline = err instanceof Error && 
+      (err.message.includes('the client is offline') || err.message.includes('offline'));
+    if (isOffline) {
+      return {
+        id: docRef.id,
+        ref: docRef,
+        exists: () => false,
+        data: () => null
+      };
+    }
+    throw err;
+  }
+}
+
+export async function getDocsSafe(queryOrColRef: any): Promise<any> {
+  try {
+    const checkOutageResponse = await fetch("/api/system/monitoring").catch(() => null);
+    if (checkOutageResponse && checkOutageResponse.ok) {
+      const stats = await checkOutageResponse.json();
+      if (stats.chaosState?.simulateDbOutage) {
+        throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
+      }
+    }
+    const snapshot = await getDocs(queryOrColRef);
+    const path = getRefPath(queryOrColRef);
+    if (path && snapshot && snapshot.docs) {
+      const listData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
+      localStorage.setItem(`local_cache_list:${path}`, JSON.stringify(listData));
+    }
+    return snapshot;
+  } catch (err: any) {
+    console.warn("getDocs failed, seeking local offline list fallback:", err);
+    
+    const path = getRefPath(queryOrColRef);
+    if (path) {
+      const cachedListStr = localStorage.getItem(`local_cache_list:${path}`);
+      if (cachedListStr) {
+        const listData = JSON.parse(cachedListStr);
+        return {
+          docs: listData.map((item: any) => ({
+            id: item.id,
+            ref: { id: item.id, path: `${path}/${item.id}` },
+            exists: () => true,
+            data: () => {
+              const { id, ...rest } = item;
+              return rest;
+            }
+          })),
+          empty: listData.length === 0,
+          size: listData.length
+        };
+      }
+    }
+    
+    const isOffline = err instanceof Error && 
+      (err.message.includes('the client is offline') || err.message.includes('offline'));
+    if (isOffline) {
+      return {
+        docs: [],
+        empty: true,
+        size: 0
+      };
+    }
+    throw err;
+  }
+}
+
 // Connection test as required by skill - gracefully optimized for offline-first sandboxes
 async function testConnection() {
   try {
-    // Elegant fallback: Use getDoc which leverages automatic cached offline access, preventing offline state hard failures
-    await getDoc(doc(db, 'test', 'connection'));
+    // Elegant fallback testing offline state safety cleanly
+    await getDocFromServer(doc(db, 'test', 'connection'));
     // Trigger background queue flush if online
     setTimeout(() => flushOfflineQueueSync(), 1500);
   } catch (error: any) {
     const isOffline = error instanceof Error && 
-      (error.message.includes('the client is offline') || error.message.includes('offline'));
+      (error.message.includes('the client is offline') || error.message.includes('offline') || error.message.includes('Failed to get document'));
     
     if (isOffline) {
       console.info("Echoes of Choice has loaded successfully. Operating in offline-resilient sandbox mode.");

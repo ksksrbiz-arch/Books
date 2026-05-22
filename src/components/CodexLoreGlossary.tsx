@@ -22,7 +22,8 @@ import {
   Scroll,
   Dna,
   RefreshCw,
-  Star
+  Star,
+  Activity
 } from "lucide-react";
 import {
   db,
@@ -40,6 +41,7 @@ import {
   updateDoc
 } from "firebase/firestore";
 import Markdown from "react-markdown";
+import { RelationshipJournalTab } from "./RelationshipJournalTab";
 
 export interface CodexEntry {
   id: string;
@@ -351,7 +353,7 @@ export function CodexLoreGlossary({
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto self-stretch md:self-auto">
-          {currentNode && (
+          {currentNode && activeTab !== "relationships" && (
             <button
               onClick={autoScanLore}
               disabled={isScanning}
@@ -370,19 +372,21 @@ export function CodexLoreGlossary({
             </button>
           )}
 
-          <button
-            onClick={() => {
-              setIsCreating(true);
-              setEditingEntryId(null);
-              setFormTitle("");
-              setFormCategory("lore");
-              setFormContent("");
-            }}
-            className="flex items-center justify-center p-2.5 rounded-xl border border-current/10 hover:bg-white/10 transition-colors"
-            title="Log Custom Discovery Journals"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
+          {activeTab !== "relationships" && (
+            <button
+              onClick={() => {
+                setIsCreating(true);
+                setEditingEntryId(null);
+                setFormTitle("");
+                setFormCategory("lore");
+                setFormContent("");
+              }}
+              className="flex items-center justify-center p-2.5 rounded-xl border border-current/10 hover:bg-white/10 transition-colors"
+              title="Log Custom Discovery Journals"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          )}
 
           <button
             onClick={onClose}
@@ -411,11 +415,15 @@ export function CodexLoreGlossary({
             { id: "item", label: "✨ Artifacts/Items" },
             { id: "clue", label: "🔍 Secrets/Clues" },
             { id: "lore", label: "📜 Lore/Legends" },
-            { id: "faction", label: "🛡️ Factions" }
+            { id: "faction", label: "🛡️ Factions" },
+            { id: "relationships", label: "💞 Relationship Journal" }
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setIsCreating(false);
+              }}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === tab.id
                   ? themeConfig.tabStyle.active
@@ -427,17 +435,23 @@ export function CodexLoreGlossary({
           ))}
         </div>
 
-        {/* Search */}
-        <div className="relative w-full md:w-72">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 opacity-40" />
-          <input
-            type="text"
-            placeholder="Search discovered lore..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white/5 border border-current/10 rounded-xl py-2 pl-10 pr-4 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-current/30 text-current placeholder-current/40"
-          />
-        </div>
+        {/* Search / Context Info */}
+        {activeTab === "relationships" ? (
+          <div className="text-[10px] font-mono opacity-50 uppercase tracking-widest text-right hidden md:block">
+            Calculated From Interactive Choices
+          </div>
+        ) : (
+          <div className="relative w-full md:w-72">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 opacity-40" />
+            <input
+              type="text"
+              placeholder="Search discovered lore..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-white/5 border border-current/10 rounded-xl py-2 pl-10 pr-4 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-current/30 text-current placeholder-current/40"
+            />
+          </div>
+        )}
       </div>
 
       {/* Main Content Workspace */}
@@ -542,6 +556,12 @@ export function CodexLoreGlossary({
                 </div>
               </form>
             </motion.div>
+          ) : activeTab === "relationships" ? (
+            <RelationshipJournalTab
+              currentUserId={currentUserId || ""}
+              currentStoryId={currentStoryId}
+              genre={genre}
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <AnimatePresence mode="popLayout">

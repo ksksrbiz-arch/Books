@@ -33,6 +33,9 @@ import {
   Sliders,
   Music,
   Wind,
+  Menu,
+  Link,
+  ArrowRight,
 } from "lucide-react";
 import {
   auth,
@@ -83,21 +86,26 @@ import { RelationshipMeter } from "./components/RelationshipMeter";
 import { BranchingTimeline } from "./components/BranchingTimeline";
 import { GoogleKeepWorkspace } from "./components/GoogleKeepWorkspace";
 import { CodexLoreGlossary } from "./components/CodexLoreGlossary";
+import { VoiceNarratorPanel } from "./components/VoiceNarratorPanel";
+import { AtmosphericFateLoader } from "./components/AtmosphericFateLoader";
 import { BookOpen } from "lucide-react";
 import {
   doc,
-  getDoc,
   collection,
   deleteDoc,
   query,
   where,
   orderBy,
-  getDocs,
   onSnapshot,
   serverTimestamp,
   limit,
 } from "firebase/firestore";
-import { setDocSafe as setDoc, addDocSafe as addDoc } from "./lib/firebase";
+import { 
+  setDocSafe as setDoc, 
+  addDocSafe as addDoc,
+  getDocSafe as getDoc,
+  getDocsSafe as getDocs
+} from "./lib/firebase";
 
 interface Choice {
   text: string;
@@ -266,6 +274,7 @@ function App() {
   const [aiPremises, setAiPremises] = useState<any[]>([]);
   const [generatingPremises, setGeneratingPremises] = useState(false);
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
+  const [isSceneFadingOut, setIsSceneFadingOut] = useState(false);
   const [history, setHistory] = useState<
     { sceneDescription: string; choiceTaken: string }[]
   >([]);
@@ -286,6 +295,7 @@ function App() {
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
   const [syncStatus, setSyncStatus] = useState<{ status: "online" | "offline_active" | "online_synced"; message: string }>({ status: "online", message: "" });
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   useEffect(() => {
     const handleSyncStatus = (e: Event) => {
@@ -312,6 +322,10 @@ function App() {
   const [hoveredStoryId, setHoveredStoryId] = useState<string | null>(null);
   const [hoveredGenre, setHoveredGenre] = useState<"romance" | "crime" | "paranormal" | null>(null);
   const [allSteps, setAllSteps] = useState<any[]>([]);
+  const [choicePreviews, setChoicePreviews] = useState<Record<number, boolean>>({});
+  const [selectedText, setSelectedText] = useState("");
+  const [selectionCoords, setSelectionCoords] = useState<{ x: number; y: number } | null>(null);
+  const [extractingLore, setExtractingLore] = useState(false);
   const [relationships, setRelationships] = useState<
     Record<string, { affinity: number; suspicion: number }>
   >({});
@@ -329,6 +343,7 @@ function App() {
     showImages: true,
     textGlow: false,
     reducedMotion: false,
+    readerMode: false,
     volume: 50,
     volumeMusic: 50,
     volumeSFX: 70,
@@ -383,6 +398,125 @@ function App() {
   useEffect(() => {
     // audioManager.setMood(currentMood);
   }, [genre, currentNode]);
+
+  // Handle jump/winding narrative to a specific historic scene
+  const handleJumpToScene = (title: string) => {
+    if (!title) return;
+    const index = allSteps.findIndex(s => s.sceneTitle?.toLowerCase().trim() === title.toLowerCase().trim());
+    if (index !== -1) {
+      branchToStep(index);
+      setShowKeepNotes(false);
+    } else {
+      // substring search as fallback
+      const subIndex = allSteps.findIndex(s => s.sceneTitle?.toLowerCase().includes(title.toLowerCase()) || title.toLowerCase().includes(s.sceneTitle?.toLowerCase() || ""));
+      if (subIndex !== -1) {
+        branchToStep(subIndex);
+        setShowKeepNotes(false);
+      }
+    }
+  };
+
+  // Text selection listener for lore extraction
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      if (typeof window === "undefined") return;
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        setSelectedText("");
+        setSelectionCoords(null);
+        return;
+      }
+
+      const text = selection.toString().trim();
+      const container = document.getElementById("story-content");
+      if (text && text.length > 2 && container && container.contains(selection.anchorNode)) {
+        setSelectedText(text);
+        try {
+          const range = selection.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          setSelectionCoords({
+            x: rect.left + window.scrollX,
+            y: rect.top + window.scrollY - 48,
+          });
+        } catch (e) {
+          // ignore coords issue
+        }
+      }
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [allSteps]);
+
+  const handleQuickExtractCodex = async (category: "character" | "location" | "item" | "clue" | "lore") => {
+    if (!selectedText || !user || !currentStoryId) return;
+    setExtractingLore(true);
+    try {
+      const entryId = `codex_${Date.now()}_highlight`;
+      const codexDocRef = doc(db, "users", user.uid, "stories", currentStoryId, "codex", entryId);
+      
+      let shortTitle = selectedText;
+      if (shortTitle.length > 30) {
+        shortTitle = shortTitle.substring(0, 27) + "...";
+      }
+
+      await setDoc(codexDocRef, {
+        title: shortTitle,
+        category: category,
+        content: selectedText,
+        status: "discovered",
+        sourceScene: currentNode?.sceneTitle || "Scene Highlight",
+        discoveredAt: new Date().toISOString()
+      });
+
+      alert(`Successfully inscribed selected text into Codex under "${category.toUpperCase()}"!`);
+      
+      window.getSelection()?.removeAllRanges();
+      setSelectedText("");
+      setSelectionCoords(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setExtractingLore(false);
+    }
+  };
+
+  const handleQuickExtractKeep = async () => {
+    if (!selectedText || !user || !currentStoryId) return;
+    setExtractingLore(true);
+    try {
+      const notesCol = collection(db, "users", user.uid, "stories", currentStoryId, "notes");
+      
+      let shortTitle = selectedText;
+      if (shortTitle.length > 30) {
+        shortTitle = shortTitle.substring(0, 27) + "...";
+      }
+
+      await addDoc(notesCol, {
+        title: `Selection: ${shortTitle}`,
+        type: "text",
+        content: selectedText,
+        color: "bg-white/5 border-white/10 text-white",
+        pinned: false,
+        labels: ["Reference"],
+        linkedSceneId: currentNode ? currentNode.sceneTitle : null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      alert("Successfully added selection as reference note on Keep Board!");
+      
+      window.getSelection()?.removeAllRanges();
+      setSelectedText("");
+      setSelectionCoords(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setExtractingLore(false);
+    }
+  };
 
   const toggleMute = () => {
     setSettings((s) => ({ ...s, isMuted: !s.isMuted }));
@@ -966,6 +1100,23 @@ function App() {
 
       if (isDocRef(storyRef)) {
         setCurrentStoryId(storyRef.id);
+
+        // Save initial NPC relationship updates to subcollection
+        if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
+          for (const update of data.npcUpdates) {
+            await addDoc(
+              collection(db, "users", user.uid, "stories", storyRef.id, "relationship_logs"),
+              {
+                name: update.name,
+                relationshipType: update.relationshipType,
+                affinityChange: update.affinityChange,
+                reason: update.reason || "Baseline integration",
+                timestamp: new Date().toISOString()
+              }
+            ).catch(err => console.error("Error saving initial rel log: ", err));
+          }
+        }
+
         // Add initial step
         await addDoc(
           collection(db, "users", user.uid, "stories", storyRef.id, "steps"),
@@ -1004,8 +1155,11 @@ function App() {
   const handleChoice = async (choice: Choice) => {
     if (!currentNode || !user || !currentStoryId) return;
 
+    // Trigger visual fade-out flow
+    setIsSceneFadingOut(true);
     setLoading(true);
     setError(null);
+
     const newHistory = [
       ...history,
       {
@@ -1014,13 +1168,12 @@ function App() {
       },
     ];
     const savedNode = currentNode; // Save in case of failure
-
     setHistory(newHistory);
 
-    // Clear current node to trigger AnimatePresence exit transition (fade/zoom out)
-    setCurrentNode(null);
+    const delayDuration = settings.reducedMotion || settings.readerMode ? 300 : 750;
 
-    try {
+    // Start fetching story in parallel with transition sequence
+    const fetchPromise = (async () => {
       let g = "Romance";
       if (genre === "crime") g = "True Crime Noir";
       if (genre === "paranormal") g = "Paranormal Occult Indie";
@@ -1054,7 +1207,18 @@ function App() {
         }),
       });
       if (!response.ok) throw new Error("Failed to continue story");
-      const data = await response.json();
+      return await response.json();
+    })();
+
+    try {
+      // Wait for both the network and the beautiful visual fade-out sequence
+      const [data] = await Promise.all([
+        fetchPromise,
+        new Promise((resolve) => setTimeout(resolve, delayDuration))
+      ]);
+
+      // Reset the fade state before binding the new story node
+      setIsSceneFadingOut(false);
 
       // Handle NPC Relationships
       let updatedRelationships = { ...relationships };
@@ -1103,8 +1267,11 @@ function App() {
         setConsequences(updatedConsequences);
       }
 
-      const newData = { ...data, id: "" }; // Will get ID later or just use index for back
-      setCurrentNode(data);
+      // Clear layout and mount the new scene node
+      setCurrentNode(null);
+      setTimeout(() => {
+        setCurrentNode(data);
+      }, 50);
 
       // Update Firestore
       await setDoc(
@@ -1123,6 +1290,22 @@ function App() {
           `users/${user.uid}/stories/${currentStoryId}`,
         ),
       );
+
+      // Save new NPC relationship updates to subcollection
+      if (data.npcUpdates && Array.isArray(data.npcUpdates)) {
+        for (const update of data.npcUpdates) {
+          await addDoc(
+            collection(db, "users", user.uid, "stories", currentStoryId, "relationship_logs"),
+            {
+              name: update.name,
+              relationshipType: update.relationshipType,
+              affinityChange: update.affinityChange,
+              reason: update.reason || "Decisive player action",
+              timestamp: new Date().toISOString()
+            }
+          ).catch(err => console.error("Error saving rel log: ", err));
+        }
+      }
 
       const stepRef = await addDoc(
         collection(db, "users", user.uid, "stories", currentStoryId, "steps"),
@@ -1166,6 +1349,7 @@ function App() {
         currentStoryId,
       );
     } catch (err: any) {
+      setIsSceneFadingOut(false);
       setCurrentNode(savedNode); // Restore the old scene so user can retry the choice
       setHistory(history); // Rollback history
       setError(err.message);
@@ -1531,7 +1715,7 @@ function App() {
       className={`min-h-screen transition-all duration-1000 ease-in-out ${themeClasses} overflow-x-hidden ${settings.reducedMotion ? "motion-reduce" : ""}`}
     >
       <Suspense fallback={null}>
-        <AtmosphericEffects genre={genre} mood={currentNode?.mood} reducedMotion={settings.reducedMotion} />
+        <AtmosphericEffects genre={genre} mood={currentNode?.mood} reducedMotion={settings.reducedMotion || settings.readerMode} />
         <SoundtrackManager
           mood={currentNode?.mood}
           intensity={currentNode?.intensity}
@@ -1909,6 +2093,24 @@ function App() {
                   </button>
                 </div>
 
+                {/* Sub Option: Reader Mode */}
+                <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
+                  <div className="space-y-0.5 text-left">
+                    <p className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      📖 Distraction-Free Reader Mode
+                    </p>
+                    <p className="text-[9px] opacity-40">Strip away graphics, cinematic headers, and complex panels for a text-centric book feel</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings((s) => ({ ...s, readerMode: !s.readerMode }))}
+                    className={`w-12 h-6 rounded-full relative transition-colors ${settings.readerMode ? `bg-${accent}-500` : "bg-white/10"}`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.readerMode ? "left-7" : "left-1"}`}
+                    />
+                  </button>
+                </div>
+
                 {/* Sub Option: Reduced Motion comfort */}
                 <div className="flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-3">
                   <div className="space-y-0.5 text-left">
@@ -2085,6 +2287,7 @@ function App() {
               currentNode={currentNode}
               onClose={() => setShowKeepNotes(false)}
               genre={genre}
+              onJumpToScene={handleJumpToScene}
             />
           </div>
         </div>
@@ -2104,9 +2307,69 @@ function App() {
         </div>
       )}
 
+      {/* Floating Selection Extract Menu */}
+      <AnimatePresence>
+        {selectedText && selectionCoords && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 5 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 5 }}
+            style={{
+              position: "absolute",
+              left: selectionCoords.x,
+              top: selectionCoords.y,
+            }}
+            className="z-50 bg-slate-950 border border-amber-500/30 backdrop-blur-md rounded-xl p-2 shadow-2xl flex items-center gap-1.5 text-[10px] text-white select-none whitespace-nowrap"
+          >
+            <span className="text-amber-400 font-extrabold px-1.5 items-center flex gap-1 border-r border-white/5 mr-0.5 pr-2">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse text-amber-400" /> Extract To:
+            </span>
+            {extractingLore ? (
+              <span className="flex items-center gap-1 text-gray-400 px-2 font-black uppercase tracking-wider">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" /> Recording...
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleQuickExtractCodex("character")}
+                  className="px-2 py-1 bg-white/5 hover:bg-amber-500/20 hover:text-amber-300 rounded font-bold transition-all cursor-pointer"
+                >
+                  Character
+                </button>
+                <button
+                  onClick={() => handleQuickExtractCodex("location")}
+                  className="px-2 py-1 bg-white/5 hover:bg-amber-500/20 hover:text-amber-300 rounded font-bold transition-all cursor-pointer"
+                >
+                  Location
+                </button>
+                <button
+                  onClick={() => handleQuickExtractCodex("clue")}
+                  className="px-2 py-1 bg-white/5 hover:bg-amber-500/20 hover:text-amber-300 rounded font-bold transition-all cursor-pointer"
+                >
+                  Clue
+                </button>
+                <button
+                  onClick={() => handleQuickExtractCodex("lore")}
+                  className="px-2 py-1 bg-white/5 hover:bg-amber-500/20 hover:text-amber-300 rounded font-bold transition-all cursor-pointer"
+                >
+                  Lore
+                </button>
+                <div className="w-[1px] h-4 bg-white/10 mx-1" />
+                <button
+                  onClick={handleQuickExtractKeep}
+                  className="px-2.5 py-1 bg-amber-500 text-slate-950 hover:bg-amber-600 rounded font-black transition-all cursor-pointer shadow-md"
+                >
+                  📌 Keep Sticky
+                </button>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Dynamic Background Gradient */}
       <div
-        style={{ opacity: bgOpacity }}
+        style={{ opacity: settings.readerMode ? 0 : bgOpacity }}
         className={`fixed inset-0 pointer-events-none transition-opacity duration-1000 ${genre ? "opacity-100" : "opacity-0"}`}
       >
         <div
@@ -2162,9 +2425,12 @@ function App() {
             Echoes
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        
+        {/* Responsive Header Controls */}
+        <div className="flex items-center gap-2 sm:gap-4">
+          {/* Desktop HUD Panel */}
           {user && (
-            <div className="flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-2">
               <button
                 onClick={() => setShowTutorial(true)}
                 className={`p-2 rounded-full transition-colors ${
@@ -2215,7 +2481,7 @@ function App() {
                   className={`p-2 rounded-full transition-colors relative ${
                     showCodex
                       ? genre === "romance"
-                        ? "text-rose-400 bg-rose-500/20"
+                        ? "text-rose-400 bg-rose-5050/20"
                         : genre === "crime"
                         ? "text-yellow-400 bg-yellow-500/20"
                         : "text-purple-400 bg-purple-500/20"
@@ -2232,6 +2498,26 @@ function App() {
                   </span>
                 </button>
               )}
+              {currentStoryId && (
+                <button
+                  onClick={() => setSettings(s => ({ ...s, readerMode: !s.readerMode }))}
+                  className={`p-2 rounded-full transition-all relative ${
+                    settings.readerMode
+                      ? "text-emerald-400 bg-emerald-500/20 shadow-sm"
+                      : genre === "romance"
+                      ? "text-rose-400 hover:bg-rose-50"
+                      : "text-gray-400 hover:bg-white/5"
+                  }`}
+                  title={settings.readerMode ? "Switch to Scenic Mode" : "Switch to Distraction-Free Reader Mode"}
+                >
+                  <Book className="w-4 h-4" />
+                  {settings.readerMode && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                    </span>
+                  )}
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(true)}
                 className={`p-2 rounded-full transition-colors ${
@@ -2245,6 +2531,8 @@ function App() {
               </button>
             </div>
           )}
+
+          {/* Desktop Profiler Display */}
           {user && (
             <div className="hidden md:flex items-center gap-3 px-4 py-2 rounded-full bg-white/5 border border-white/5">
               {user.photoURL ? (
@@ -2270,6 +2558,8 @@ function App() {
               </button>
             </div>
           )}
+
+          {/* Ambient Soundtrack controls: accessible everywhere on any device hierarchy */}
           <button
             onClick={toggleMute}
             className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
@@ -2289,10 +2579,12 @@ function App() {
               <Volume2 className="w-4 h-4" />
             )}
           </button>
+
+          {/* New Fate trigger for desktop viewports */}
           {genre && (
             <button
               onClick={resetGame}
-              className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all px-4 py-2 rounded-full border ${
+              className={`hidden md:flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all px-4 py-2 rounded-full border ${
                 genre === "romance"
                   ? "border-rose-100 text-rose-400 hover:bg-rose-50"
                   : genre === "paranormal"
@@ -2304,8 +2596,204 @@ function App() {
               New Fate
             </button>
           )}
+
+          {/* Mobile Hamburg Toggle Button - Generates massive overlay drawer for perfect touch ergonomics */}
+          {user && (
+            <button
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              className={`flex md:hidden items-center justify-center w-10 h-10 rounded-xl transition-all border ${
+                genre === "romance"
+                  ? "border-rose-100 text-rose-500 bg-rose-50/50"
+                  : genre === "paranormal"
+                    ? "border-purple-500/20 text-purple-400 bg-purple-900/10"
+                    : "border-white/10 text-white bg-white/5"
+              }`}
+              aria-label="Toggle Menu"
+            >
+              {showMobileMenu ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          )}
         </div>
       </nav>
+
+      {/* Full-Screen Immersive Mobile Navigation Overlay */}
+      <AnimatePresence>
+        {showMobileMenu && user && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ type: "spring", bounce: 0, duration: 0.4 }}
+            className={`fixed inset-x-0 top-[88px] bottom-0 z-[49] p-6 md:hidden backdrop-blur-3xl overflow-y-auto flex flex-col justify-between ${
+              genre === "romance"
+                ? "bg-white/95 text-rose-950 border-t border-rose-100/50"
+                : genre === "crime"
+                  ? "bg-black/95 text-white border-t border-white/5"
+                  : genre === "paranormal"
+                    ? "bg-[#0c0517]/95 text-purple-100 border-t border-purple-500/10"
+                    : "bg-black/95 text-white border-t border-white/5"
+            }`}
+          >
+            <div className="space-y-6">
+              {/* Mobile Identity Card */}
+              <div className={`p-4 rounded-3xl flex items-center gap-4 border ${
+                genre === "romance" ? "bg-rose-50/50 border-rose-100" : "bg-white/5 border-white/5"
+              }`}>
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    className="w-10 h-10 rounded-full border border-white/10"
+                    alt=""
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center">
+                    <UserIcon className="w-5 h-5 text-gray-400" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-mono tracking-widest uppercase opacity-40">Narrator</p>
+                  <p className="text-sm font-bold truncate">
+                    {user.displayName || user.email?.split("@")[0]}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons list (Generous Touch Targets min-44px, usually 50px+) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    setShowTutorial(true);
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full py-4 px-6 rounded-2xl flex items-center gap-4 font-bold text-xs uppercase tracking-wider text-left border ${
+                    genre === "romance" ? "bg-rose-50/50 border-rose-100/70 hover:bg-rose-100/50" : "bg-white/5 border-white/10 hover:bg-white/10"
+                  }`}
+                >
+                  <Book className="w-5 h-5 text-rose-400 shrink-0" />
+                  <span>How to Play</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    fetchUserStories(user.uid);
+                    setShowLibrary(true);
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full py-4 px-6 rounded-2xl flex items-center gap-4 font-bold text-xs uppercase tracking-wider text-left border ${
+                    genre === "romance" ? "bg-rose-50/50 border-rose-100/70 hover:bg-rose-100/50" : "bg-white/5 border-white/10 hover:bg-white/10"
+                  }`}
+                >
+                  <LibraryIcon className="w-5 h-5 text-sky-400 shrink-0" />
+                  <span>Story Library</span>
+                </button>
+
+                {currentStoryId && (
+                  <button
+                    onClick={() => {
+                      setShowKeepNotes(!showKeepNotes);
+                      setShowMobileMenu(false);
+                    }}
+                    className={`w-full py-4 px-6 rounded-2xl flex items-center justify-between font-bold text-xs uppercase tracking-wider text-left border ${
+                      showKeepNotes
+                        ? "bg-amber-500/10 border-amber-400/50 text-amber-500 dark:text-amber-400"
+                        : genre === "romance" ? "bg-rose-50/50 border-rose-100/70" : "bg-white/5 border-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center gap-4">
+                      <Lightbulb className="w-5 h-5 text-amber-500 shrink-0" />
+                      <span>Keep Board</span>
+                    </span>
+                    <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  </button>
+                )}
+
+                {currentStoryId && (
+                  <button
+                    onClick={() => {
+                      setShowCodex(!showCodex);
+                      setShowMobileMenu(false);
+                    }}
+                    className={`w-full py-4 px-6 rounded-2xl flex items-center justify-between font-bold text-xs uppercase tracking-wider text-left border ${
+                      showCodex
+                        ? "bg-purple-500/10 border-purple-400/50 text-purple-500 dark:text-purple-400"
+                        : genre === "romance" ? "bg-rose-50/50 border-rose-100/70" : "bg-white/5 border-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center gap-4">
+                      <BookOpen className="w-5 h-5 text-purple-400 shrink-0" />
+                      <span>Codex & Lore</span>
+                    </span>
+                    <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setShowSettings(true);
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full py-4 px-6 rounded-2xl flex items-center gap-4 font-bold text-xs uppercase tracking-wider text-left border ${
+                    genre === "romance" ? "bg-rose-50/50 border-rose-100/70" : "bg-white/5 border-white/10"
+                  }`}
+                >
+                  <Settings className="w-5 h-5 text-gray-400 shrink-0" />
+                  <span>Settings</span>
+                </button>
+
+                {currentStoryId && (
+                  <button
+                    onClick={() => {
+                      setSettings(s => ({ ...s, readerMode: !s.readerMode }));
+                      setShowMobileMenu(false);
+                    }}
+                    className={`w-full py-4 px-6 rounded-2xl flex items-center justify-between font-bold text-xs uppercase tracking-wider text-left border ${
+                      settings.readerMode
+                        ? "bg-emerald-500/10 border-emerald-400/50 text-emerald-500 dark:text-emerald-400"
+                        : genre === "romance" ? "bg-rose-50/50 border-rose-100/70" : "bg-white/5 border-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center gap-4">
+                      <Book className="w-5 h-5 text-emerald-400 shrink-0" />
+                      <span>Reader Mode</span>
+                    </span>
+                    <span className={`h-2 w-2 rounded-full ${settings.readerMode ? "bg-emerald-500" : "bg-gray-400 opacity-30"} animate-pulse`} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-6 mt-8 border-t border-neutral-200 dark:border-white/5">
+              {genre && (
+                <button
+                  onClick={() => {
+                    resetGame();
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full py-4 px-6 rounded-2xl flex items-center justify-center gap-2 font-bold text-xs uppercase tracking-[0.2em] border ${
+                    genre === "romance"
+                      ? "border-rose-100 text-rose-500 bg-rose-50/30 hover:bg-rose-50"
+                      : "border-white/10 text-white bg-white/5 hover:bg-white/10"
+                  }`}
+                >
+                  <RefreshCcw className="w-4 h-4 shrink-0" />
+                  New Fate
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  logout();
+                  setShowMobileMenu(false);
+                }}
+                className="w-full py-4 px-6 rounded-2xl flex items-center justify-center gap-2 font-bold text-xs uppercase tracking-[0.2em] text-rose-500 bg-rose-500/5 hover:bg-rose-500/10 transition-colors"
+              >
+                <LogOut className="w-4 h-4 shrink-0" />
+                Logout
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <main className="pt-32 pb-20 px-6 max-w-5xl mx-auto min-h-screen relative z-10 flex flex-col">
         <AnimatePresence mode="wait">
@@ -2441,6 +2929,7 @@ function App() {
                     src="/src/assets/images/genre_romance_card_1779164930713.png"
                     className="absolute inset-0 w-full h-full object-cover opacity-30 group-hover:opacity-60 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none mix-blend-multiply"
                     alt="Romance"
+                    loading="lazy"
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#FCF8F8] via-[#FCF8F8]/60 to-transparent opacity-100" />
@@ -2465,6 +2954,7 @@ function App() {
                     src="/src/assets/images/genre_crime_card_1779164947927.png"
                     className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-40 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none grayscale"
                     alt="Crime"
+                    loading="lazy"
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#0A0C10] via-[#0A0C10]/80 to-transparent opacity-100" />
@@ -2489,6 +2979,7 @@ function App() {
                     src="/src/assets/images/genre_paranormal_card_1779164962472.png"
                     className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-50 group-hover:scale-105 transition-all duration-[1.5s] ease-out pointer-events-none"
                     alt="Paranormal"
+                    loading="lazy"
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#0D0A14] via-[#0D0A14]/80 to-transparent opacity-100" />
@@ -2503,6 +2994,135 @@ function App() {
                   </div>
                 </button>
               </div>
+            </motion.div>
+          ) : showParameterSetup && loading ? (
+            <motion.div
+              key="generating-story"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.02 }}
+              className="flex-1 flex flex-col justify-center items-center max-w-lg mx-auto w-full gap-8 py-16 text-center"
+            >
+              <div className={`w-full p-10 rounded-[3rem] border space-y-8 shadow-2xl backdrop-blur-md relative overflow-hidden ${cardBase}`}>
+                
+                {/* Visual Accent Gradient Core */}
+                <div className={`absolute -top-16 -left-16 w-36 h-36 rounded-full blur-[80px] opacity-20 bg-${accent}-400`} />
+                <div className={`absolute -bottom-16 -right-16 w-36 h-36 rounded-full blur-[80px] opacity-20 bg-${accent}-400`} />
+                
+                <div className="flex flex-col items-center gap-6">
+                  {/* Outer breathing ring */}
+                  <div className="relative flex items-center justify-center">
+                    <motion.div
+                      animate={{
+                        scale: [1, 1.15, 1],
+                        opacity: [0.15, 0.35, 0.15],
+                      }}
+                      transition={{
+                        repeat: Infinity,
+                        duration: 2.5,
+                        ease: "easeInOut",
+                      }}
+                      className={`absolute inset-0 rounded-full blur-xl bg-${accent}-500/30`}
+                    />
+                    <div className="relative w-20 h-20 rounded-[2rem] flex items-center justify-center border bg-white/5 border-white/5">
+                      {genre === "romance" ? (
+                        <Heart className="w-8 h-8 text-rose-400 animate-pulse" />
+                      ) : genre === "paranormal" ? (
+                        <Sparkles className="w-8 h-8 text-purple-400 animate-pulse" />
+                      ) : (
+                        <Skull className="w-8 h-8 text-sky-400 animate-pulse" />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className={`text-3xl font-serif tracking-tight ${genre === "romance" ? "text-rose-950 italic" : "text-white"}`}>
+                      {genre === "romance"
+                        ? "Weaving Your Romance"
+                        : genre === "paranormal"
+                          ? "Manifesting Occult Realms"
+                          : "Assembling Clues"}
+                    </h3>
+                    <p className="text-xs opacity-50 font-sans max-w-xs mx-auto">
+                      Preparing a customized interactive timeline and rich world simulation...
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Bar */}
+                <div className="space-y-4 pt-4">
+                  <div className="flex items-center justify-between text-[10px] font-mono tracking-wider opacity-40">
+                    <span className="uppercase">Quantum Threading</span>
+                    <span className="animate-pulse">Active</span>
+                  </div>
+                  {/* Custom progress rail */}
+                  <div className="h-1 bg-black/10 dark:bg-white/5 rounded-full overflow-hidden">
+                    <motion.div
+                      initial={{ width: "5%" }}
+                      animate={{ width: "95%" }}
+                      transition={{ duration: 15, ease: "easeOut" }}
+                      className={`h-full bg-gradient-to-r ${
+                        genre === "romance"
+                          ? "from-rose-400 to-rose-600"
+                          : genre === "paranormal"
+                            ? "from-purple-500 to-indigo-600"
+                            : "from-sky-500 to-blue-600"
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                {/* Configuration Specs Box */}
+                <div className="p-5 rounded-2xl border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 text-left space-y-3 font-mono text-[10px]">
+                  <div className="flex justify-between items-center">
+                    <span className="opacity-40 uppercase tracking-widest">Selected Fate</span>
+                    <span className={`font-bold uppercase tracking-wider ${genre === "romance" ? "text-rose-500" : genre === "paranormal" ? "text-purple-400" : "text-sky-400"}`}>{genre}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="opacity-40 uppercase tracking-widest">Character Archetype</span>
+                    <span className="text-amber-500 font-bold max-w-[180px] truncate" title={storyParameters.archetype}>{storyParameters.archetype}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="opacity-40 uppercase tracking-widest">Narrative Depth</span>
+                    <span className="opacity-80 capitalize">{storyParameters.complexity}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="opacity-40 uppercase tracking-widest">Melodic Tone</span>
+                    <span className="opacity-80 capitalize">{storyParameters.tone}</span>
+                  </div>
+                  {storyParameters.isAdultContent && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-rose-400/60 uppercase tracking-widest">Creative Limit</span>
+                      <span className="text-rose-500 font-bold uppercase tracking-widest">18+ Mature Themes</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Immersive breathing system updates */}
+                <div className="text-[10px] font-mono text-center tracking-wider h-4 overflow-hidden">
+                  <motion.p
+                    initial={{ y: 15, opacity: 0 }}
+                    animate={{ y: [15, 0, 0, -15], opacity: [0, 1, 1, 0] }}
+                    transition={{
+                      repeat: Infinity,
+                      repeatDelay: 1,
+                      duration: 4,
+                      ease: "easeInOut",
+                    }}
+                    className={`italic ${genre === "romance" ? "text-rose-900/60" : "text-white/40"}`}
+                  >
+                    {genre === "romance"
+                      ? "Igniting character chemistry parameters..."
+                      : genre === "paranormal"
+                        ? "Aligning spirit frequencies and occult boundaries..."
+                        : "Compiling crime logs and atmospheric noir aesthetics..."}
+                  </motion.p>
+                </div>
+
+              </div>
+              <p className="text-[9px] font-mono opacity-30 uppercase tracking-[0.3em]">
+                Do not close this chamber. Your narrative is forming.
+              </p>
             </motion.div>
           ) : showParameterSetup ? (
             <motion.div
@@ -2949,11 +3569,16 @@ function App() {
                       </div>
                     )}
                     {/* Scene Visual Container */}
-                    <motion.div
-                      initial={{ scale: 0.98, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className={`p-1 rounded-[2.5rem] ${cardBase}`}
-                    >
+                    {!settings.readerMode && (
+                      <motion.div
+                        initial={{ scale: 0.98, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className={`p-1 rounded-[2.5rem] ${cardBase} transition-all ${
+                          settings.reducedMotion
+                            ? "duration-300 ease-linear"
+                            : "duration-500 delay-200 ease-linear"
+                        } ${isSceneFadingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"}`}
+                      >
                       <div className="relative group">
                         <div
                           className={`absolute inset-0 blur-3xl opacity-20 -z-10 group-hover:opacity-40 transition-opacity duration-1000 ${
@@ -3091,11 +3716,18 @@ function App() {
                         </div>
                       </div>
                     </motion.div>
+                    )}
 
                     {/* Content Layout */}
-                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-16 lg:gap-24">
+                    <div className={settings.readerMode ? "max-w-2xl mx-auto w-full space-y-12" : "grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-16 lg:gap-24"}>
                       {/* Left Column: Story */}
-                      <div className="space-y-10">
+                      <div
+                        className={`space-y-10 transition-all ${
+                          settings.reducedMotion || settings.readerMode
+                            ? "duration-300 ease-linear"
+                            : "duration-500 ease-linear"
+                        } ${isSceneFadingOut ? "opacity-0" : "opacity-100"}`}
+                      >
                         <div className="space-y-6">
                           <div className="flex items-center gap-4">
                             <span
@@ -3151,12 +3783,24 @@ function App() {
                             <span className="inline-block w-1 h-4 ml-1 bg-current animate-pulse align-middle" />
                           )}
                         </div>
+
+                        {currentNode && (
+                          <div className="pt-6 border-t border-current/5">
+                            <VoiceNarratorPanel
+                              currentNode={currentNode}
+                              genre={genre}
+                              relationships={relationships}
+                              settings={settings}
+                              setSettings={setSettings}
+                            />
+                          </div>
+                        )}
                       </div>
 
                       {/* Right Column: Choices */}
-                      <div className="relative">
+                      <div className={settings.readerMode ? "w-full pt-6" : "relative"}>
                         <div
-                          className={`sticky top-32 space-y-8 p-10 rounded-[2.5rem] border transition-all duration-700 ${
+                          className={settings.readerMode ? "space-y-6 text-left border-t border-black/5 dark:border-white/5 pt-10 animate-fadeIn" : `sticky top-32 space-y-8 p-10 rounded-[2.5rem] border transition-all duration-700 ${
                             genre === "romance"
                               ? "bg-white border-rose-100/50 shadow-xl shadow-rose-200/20"
                               : genre === "paranormal"
@@ -3165,7 +3809,7 @@ function App() {
                           }`}
                         >
                           <h4
-                            className={`text-[10px] uppercase tracking-[0.3em] font-black mb-8 ${
+                            className={`text-[10px] uppercase tracking-[0.3em] font-black ${settings.readerMode ? "mb-4" : "mb-8"} ${
                               genre === "romance"
                                 ? "text-rose-400"
                                 : genre === "paranormal"
@@ -3268,33 +3912,121 @@ function App() {
                                   </AnimatePresence>
 
                                   <div className="space-y-4">
-                                    {currentNode.choices?.map((choice, idx) => (
-                                      <motion.button
-                                        key={idx}
-                                        initial={{ opacity: 0, x: -20 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        transition={{ delay: 0.5 + idx * 0.1 }}
-                                        onClick={() => handleChoice(choice)}
-                                        className={`group relative p-6 text-left border rounded-3xl transition-all duration-500 transform active:scale-95 w-full ${cardBase} hover:border-${accent}-500/50`}
-                                      >
-                                        <div className="flex items-start gap-4">
-                                          <div
-                                            className={`mt-1.5 w-1.5 h-1.5 rounded-full transition-all duration-500 group-hover:scale-150 ${
-                                              genre === "romance"
-                                                ? "bg-rose-300 group-hover:bg-rose-500"
-                                                : genre === "paranormal"
-                                                  ? "bg-purple-600 group-hover:bg-purple-400"
-                                                  : "bg-sky-900 group-hover:bg-sky-400"
-                                            }`}
-                                          />
-                                          <span
-                                            className={`flex-1 font-bold leading-tight ${genre === "romance" ? "text-rose-950 text-base" : "text-white text-sm font-sans"}`}
+                                    {currentNode.choices?.map((choice, idx) => {
+                                      const flickerClass = settings.reducedMotion || settings.readerMode
+                                        ? ""
+                                        : genre === "romance"
+                                          ? "animate-flicker-soft"
+                                          : genre === "paranormal"
+                                            ? "animate-flicker-occult"
+                                            : "animate-flicker-neon";
+
+                                      return (
+                                        <div key={idx} className="space-y-2">
+                                          <motion.div
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault();
+                                                handleChoice(choice);
+                                              }
+                                            }}
+                                            initial={settings.reducedMotion ? { opacity: 0, x: -10 } : { opacity: 0, x: -15, filter: "brightness(0.4) blur(1px)" }}
+                                            animate={settings.reducedMotion ? { opacity: 1, x: 0 } : { opacity: [0, 0.4, 0.2, 0.95, 0.6, 1], x: 0, filter: "brightness(1) blur(0px)" }}
+                                            transition={{
+                                              duration: 0.8,
+                                              delay: 0.5 + idx * 0.15,
+                                              ease: "easeInOut"
+                                            }}
+                                            onClick={() => handleChoice(choice)}
+                                            className={`group relative text-left transition-all duration-300 transform active:scale-[0.98] w-full cursor-pointer ${
+                                              settings.readerMode
+                                                ? "p-4 border border-black/5 dark:border-white/10 rounded-2xl bg-black/5 dark:bg-white/5"
+                                                : `p-6 border rounded-3xl ${cardBase}`
+                                            } ${flickerClass} hover:border-${accent}-500/50 flex flex-col justify-between`}
                                           >
-                                            {choice.text}
-                                          </span>
+                                            <div className="flex items-start gap-4 w-full">
+                                              <div
+                                                className={`mt-1.5 w-1.5 h-1.5 rounded-full transition-all duration-500 group-hover:scale-150 ${
+                                                  genre === "romance"
+                                                    ? "bg-rose-300 group-hover:bg-rose-500"
+                                                    : genre === "paranormal"
+                                                      ? "bg-purple-600 group-hover:bg-purple-400"
+                                                      : "bg-sky-900 group-hover:bg-sky-400"
+                                                }`}
+                                              />
+                                              <span
+                                                className={`flex-1 font-bold leading-tight ${genre === "romance" ? "text-rose-950 text-base" : "text-white text-sm font-sans"}`}
+                                              >
+                                                {choice.text}
+                                              </span>
+                                            </div>
+
+                                            {/* Preview Toggle Row */}
+                                            <div 
+                                              className="mt-3 flex items-center justify-between border-t border-white/5 pt-2 w-full text-[10px]" 
+                                              onClick={(e) => { e.stopPropagation(); }}
+                                            >
+                                              <span className="text-[10px] text-gray-500 font-medium">Branch Consequence</span>
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setChoicePreviews(prev => ({ ...prev, [idx]: !prev[idx] }));
+                                                }}
+                                                className={`px-2.5 py-1 rounded transition-all font-black uppercase flex items-center gap-1 border cursor-pointer ${
+                                                  choicePreviews[idx]
+                                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                                    : "bg-white/5 border-white/5 text-gray-400 hover:text-white"
+                                                }`}
+                                              >
+                                                <Eye className="w-3.5 h-3.5" /> {choicePreviews[idx] ? "Hide Echoes" : "Preview Echoes"}
+                                              </button>
+                                            </div>
+
+                                            {/* Preview details */}
+                                            <AnimatePresence>
+                                              {choicePreviews[idx] && (
+                                                <motion.div
+                                                  initial={{ opacity: 0, height: 0 }}
+                                                  animate={{ opacity: 1, height: "auto" }}
+                                                  exit={{ opacity: 0, height: 0 }}
+                                                  className="mt-3.5 border-t border-white/5 pt-3 space-y-2 text-left w-full overflow-hidden"
+                                                >
+                                                  <div className="bg-slate-900/50 p-3 rounded-2xl border border-white/5 text-[11px] text-gray-300 leading-relaxed font-sans font-medium">
+                                                    <span className="font-extrabold uppercase text-[9px] text-amber-400 block tracking-wider mb-1">Estimated Afterward:</span>
+                                                    {choice.nextContext || "The fate of this branch remains shrouded in dense mystery."}
+                                                  </div>
+
+                                                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                                    {(/trust|affinity|ally|relationship|companion|friend|love|kiss|bond/i.test(choice.nextContext || "") || /trust|affinity|ally/i.test(choice.text)) && (
+                                                      <span className="bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[8.5px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                        ▲ Relational Affinity
+                                                      </span>
+                                                    )}
+                                                    {(/suspic|hide|secret|lie|accuse|crime|spy|detective/i.test(choice.nextContext || "") || /suspic|hide|secret/i.test(choice.text)) && (
+                                                      <span className="bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[8.5px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                        ▼ Suspicion Change
+                                                      </span>
+                                                    )}
+                                                    {(/artifact|clue|lore|discover|learn|uncover|history|legend|book|truth/i.test(choice.nextContext || "") || /history|legend|artifact/i.test(choice.text)) && (
+                                                      <span className="bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[8.5px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                        🔮 Adds Lore Cards
+                                                      </span>
+                                                    )}
+                                                    {(/fight|confront|danger|escape|run|danger|peril|combat|warn/i.test(choice.nextContext || "") || /run|escape/i.test(choice.text)) && (
+                                                      <span className="bg-red-500/10 border border-red-500/20 text-red-300 text-[8.5px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                        ⚠️ Perilous Path
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                </motion.div>
+                                              )}
+                                            </AnimatePresence>
+                                          </motion.div>
                                         </div>
-                                      </motion.button>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
 
                                   <div className="pt-6 border-t border-white/5 mt-4 space-y-4">
@@ -3368,19 +4100,7 @@ function App() {
                               )}
                             </div>
                           ) : (
-                            <div className="flex flex-col items-center gap-6 py-12 text-center">
-                              <Loader2
-                                className={`w-8 h-8 animate-spin ${genre === "romance" ? "text-rose-300" : genre === "paranormal" ? "text-purple-500" : "text-sky-900"}`}
-                              />
-                              <div className="space-y-1">
-                                <div className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40">
-                                  Calculating Fate
-                                </div>
-                                <div className="text-xs opacity-30 italic">
-                                  Actions carry weight...
-                                </div>
-                              </div>
-                            </div>
+                            <AtmosphericFateLoader genre={genre} />
                           )}
                         </div>
                       </div>

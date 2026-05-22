@@ -82,14 +82,17 @@ interface GoogleKeepWorkspaceProps {
   currentNode: { sceneTitle: string; sceneDescription: string } | null;
   onClose: () => void;
   genre: string | null;
+  onJumpToScene?: (sceneTitle: string) => void;
 }
 
 export function GoogleKeepWorkspace({
   currentStoryId,
   currentNode,
   onClose,
-  genre
+  genre,
+  onJumpToScene
 }: GoogleKeepWorkspaceProps) {
+  const [seedingLoading, setSeedingLoading] = useState(false);
   const [notes, setNotes] = useState<CreativeNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -126,6 +129,58 @@ export function GoogleKeepWorkspace({
   const [selectedTemplate, setSelectedTemplate] = useState<string>("Character Profile");
 
   const currentUser = auth.currentUser;
+
+  // Generate Starter Board with AI
+  const handleGenerateStarterBoard = async () => {
+    if (!currentUser || !currentStoryId) return;
+    setSeedingLoading(true);
+    try {
+      const res = await fetch("/api/story/keep-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "generate-starter",
+          sceneTitle: currentNode?.sceneTitle || "",
+          sceneDescription: currentNode?.sceneDescription || "",
+          genre: genre || "mystery"
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to preseed board with starter notes");
+      const cards = await res.json();
+
+      if (Array.isArray(cards)) {
+        const notesCol = collection(db, "users", currentUser.uid, "stories", currentStoryId, "notes");
+        for (const card of cards) {
+          const listItems = card.type === "checklist" && Array.isArray(card.listItems)
+            ? card.listItems.map((itemText: string, i: number) => ({
+                id: `check_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
+                text: itemText,
+                checked: false
+              }))
+            : [];
+
+          await addDoc(notesCol, {
+            title: card.title || "Starter Note",
+            type: card.type || "text",
+            content: card.type === "text" ? (card.content || "") : "",
+            listItems: listItems,
+            color: card.color || "bg-white/5 border-white/10 text-white",
+            pinned: false,
+            labels: card.labels || ["Outline"],
+            linkedSceneId: currentNode ? currentNode.sceneTitle : null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Starter seeding error:", e);
+      alert("Seeding creative starter notes failed: " + String(e));
+    } finally {
+      setSeedingLoading(false);
+    }
+  };
 
   // Real-time listener for story notes
   useEffect(() => {
@@ -779,12 +834,30 @@ export function GoogleKeepWorkspace({
                   Start outline nodes, list characters, specify plot points, or request Gemini to pre-generate storytelling references!
                 </p>
               </div>
-              <button
-                onClick={() => setIsCreating(true)}
-                className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-extrabold uppercase tracking-widest rounded-xl transition-all"
-              >
-                Create First Note
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsCreating(true)}
+                  className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/35 text-amber-400 text-xs font-extrabold uppercase tracking-widest rounded-xl transition-all"
+                  disabled={seedingLoading}
+                >
+                  Create First Note
+                </button>
+                <button
+                  onClick={handleGenerateStarterBoard}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  disabled={seedingLoading}
+                >
+                  {seedingLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Seeding Board...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-slate-950" /> Starter Board (AI)
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
@@ -804,6 +877,7 @@ export function GoogleKeepWorkspace({
                         onDelete={deleteNote}
                         onTogglePin={togglePin}
                         onToggleCheck={toggleListItemLive}
+                        onJumpToScene={onJumpToScene}
                       />
                     ))}
                   </div>
@@ -828,6 +902,7 @@ export function GoogleKeepWorkspace({
                         onDelete={deleteNote}
                         onTogglePin={togglePin}
                         onToggleCheck={toggleListItemLive}
+                        onJumpToScene={onJumpToScene}
                       />
                     ))}
                   </div>
@@ -1052,6 +1127,7 @@ interface KeepCardProps {
   onDelete: (noteId: string) => void;
   onTogglePin: (e: React.MouseEvent, note: CreativeNote) => void;
   onToggleCheck: (note: CreativeNote, itemIndex: number) => void;
+  onJumpToScene?: (sceneTitle: string) => void;
 }
 
 function KeepCard({
@@ -1060,7 +1136,8 @@ function KeepCard({
   onEdit,
   onDelete,
   onTogglePin,
-  onToggleCheck
+  onToggleCheck,
+  onJumpToScene
 }: KeepCardProps) {
   const isCurrentlyLinked = currentNode && note.linkedSceneId === currentNode.sceneTitle;
 
@@ -1128,11 +1205,24 @@ function KeepCard({
       <div className="mt-4 space-y-2">
         {/* Linked scene status block */}
         {note.linkedSceneId && (
-          <div className="flex items-center gap-1.5 py-1 px-2.5 bg-sky-500/10 border border-sky-500/25 rounded-md text-[9.5px] font-bold text-sky-400 w-fit shrink-0">
-            <Link className="w-3 h-3 text-sky-400 animate-pulse" />
-            <span className="truncate max-w-[130px]" title={`Linked scene: "${note.linkedSceneId}"`}>
-              Scene: {note.linkedSceneId}
-            </span>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-1.5 py-1 px-2.5 bg-sky-500/10 border border-sky-500/25 rounded-md text-[9.5px] font-bold text-sky-450 w-fit shrink-0">
+              <Link className="w-3 h-3 text-sky-400 animate-pulse" />
+              <span className="truncate max-w-[130px]" title={`Linked scene: "${note.linkedSceneId}"`}>
+                Scene: {note.linkedSceneId}
+              </span>
+            </div>
+            {onJumpToScene && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onJumpToScene(note.linkedSceneId!);
+                }}
+                className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-sky-400 bg-sky-500/15 hover:bg-sky-500/25 rounded border border-sky-500/20 transition-all flex items-center gap-1 shrink-0"
+              >
+                Go to Scene <ArrowRight className="w-3 h-3 text-sky-450" />
+              </button>
+            )}
           </div>
         )}
 
