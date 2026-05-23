@@ -59,7 +59,7 @@ export function EnhancedImageContainer({
       const saved = localStorage.getItem("setting_img_transition");
       if (saved) return saved as any;
     } catch (e) {}
-    return "exposure_leak";
+    return "cross_dissolve";
   });
 
   // 3. Ken Burns Camera Movement: 'dolly_in' | 'dolly_out' | 'pan_left_right' | 'tilting_crawl' | 'handheld_shiver' | 'static_view'
@@ -81,7 +81,7 @@ export function EnhancedImageContainer({
       const saved = localStorage.getItem("setting_img_temporal");
       if (saved) return saved as any;
     } catch (e) {}
-    return "projector_flicker";
+    return "none";
   });
 
   // 5. Color Grades: 'raw' | 'cinematic_teal_orange' | 'gothic_noir' | 'gold_vintage' | 'cyan_haunting' | 'chroma_vivid'
@@ -154,6 +154,41 @@ export function EnhancedImageContainer({
 
   const loadStartTime = useRef<number>(0);
   const prevImageUrl = useRef<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [hasIntersected, setHasIntersected] = useState(false);
+
+  // Intersection Observer for on-demand lazy loading
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setHasIntersected(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setHasIntersected(true);
+            if (containerRef.current) {
+              observer.unobserve(containerRef.current);
+            }
+          }
+        });
+      },
+      {
+        rootMargin: "120px", // Fetch image slightly before entering viewport for smooth UX
+        threshold: 0.01,
+      }
+    );
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   // Save utility helpers
   const persistChoice = (key: string, value: string, setter: (val: any) => void) => {
@@ -213,6 +248,8 @@ export function EnhancedImageContainer({
 
   // Animate dynamic transitions on Image URL updates
   useEffect(() => {
+    if (!hasIntersected) return;
+
     if (!imageUrl) {
       setCurrentSrc(null);
       setDisplayedSrc(null);
@@ -281,7 +318,9 @@ export function EnhancedImageContainer({
     }
 
     setCacheStatus("MISS");
-    setImgLoaded(false);
+    if (!displayedSrc) {
+      setImgLoaded(false);
+    }
     loadStartTime.current = performance.now();
 
     const img = new Image();
@@ -316,7 +355,7 @@ export function EnhancedImageContainer({
         swapSourceWithTransitions(imageUrl, false);
       }
     };
-  }, [imageUrl, resolutionSetting, transitionStyleSetting, performanceSetting]);
+  }, [imageUrl, resolutionSetting, transitionStyleSetting, performanceSetting, hasIntersected]);
 
   // CSS Color Grading matrices matching cinematic palettes
   const getFilterCSS = () => {
@@ -378,6 +417,7 @@ export function EnhancedImageContainer({
 
   return (
     <div
+      ref={containerRef}
       id="cinematic-rendering-viewport"
       className="relative w-full h-full select-none overflow-hidden group/img-panel transition-all duration-700 bg-black flex items-center justify-center cursor-default"
     >
@@ -577,6 +617,7 @@ export function EnhancedImageContainer({
                 src={displayedSrc}
                 className={`w-full h-full object-cover transition-all ${getFilterCSS()}`}
                 alt={alt}
+                loading="lazy"
                 referrerPolicy="no-referrer"
               />
             </motion.div>

@@ -839,7 +839,37 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
   const isAdultContent = !!req.body?.isAdultContent;
   const customBasis = typeof req.body?.customBasis === 'string' ? req.body.customBasis.trim() : "";
   
-  const cacheKey = getCacheKey("start", { genre, storyLength, characterArchetype, backstory, plotComplexity, tone, isAdultContent, customBasis });
+  // Advanced narrative control and style parameters
+  const characterMotive = typeof req.body?.characterMotive === 'string' ? req.body.characterMotive.trim() : "";
+  const definingTraits = typeof req.body?.definingTraits === 'string' ? req.body.definingTraits.trim() : "";
+  const relationshipsDynamics = typeof req.body?.relationshipsDynamics === 'string' ? req.body.relationshipsDynamics.trim() : "";
+  const worldGeography = typeof req.body?.worldGeography === 'string' ? req.body.worldGeography.trim() : "";
+  const worldHistory = typeof req.body?.worldHistory === 'string' ? req.body.worldHistory.trim() : "";
+  const worldSocialStructures = typeof req.body?.worldSocialStructures === 'string' ? req.body.worldSocialStructures.trim() : "";
+  
+  const styleTonePreset = typeof req.body?.styleTonePreset === 'string' ? req.body.styleTonePreset.trim() : "";
+  const vocabularyComplexity = typeof req.body?.vocabularyComplexity === 'number' ? req.body.vocabularyComplexity : 3;
+  const sentenceRhythm = typeof req.body?.sentenceRhythm === 'number' ? req.body.sentenceRhythm : 3;
+  
+  const cacheKey = getCacheKey("start", { 
+    genre, 
+    storyLength, 
+    characterArchetype, 
+    backstory, 
+    plotComplexity, 
+    tone, 
+    isAdultContent, 
+    customBasis,
+    characterMotive,
+    definingTraits,
+    relationshipsDynamics,
+    worldGeography,
+    worldHistory,
+    worldSocialStructures,
+    styleTonePreset,
+    vocabularyComplexity,
+    sentenceRhythm
+  });
   const cached = apiCache.get(cacheKey);
   if (cached) {
     console.log("Cache hit for story start");
@@ -856,8 +886,32 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
     PROTAGONIST ARCHETYPE: ${characterArchetype || 'unknown'}
     BACKSTORY/AMBITION: ${backstory || 'To be discovered'}
     PLOT COMPLEXITY: ${plotComplexity || 'complex'}
-    NARRATIVE TONE: ${tone || 'intense'} (Adjust the atmosphere and prose density to match this).
+    NARRATIVE TONE: ${styleTonePreset || tone || 'intense'} (Adjust the atmosphere and prose density to match this style).
     
+    ${characterMotive ? `PROTAGONIST MOTIVES: ${characterMotive}` : ''}
+    ${definingTraits ? `PROTAGONIST DEFINING TRAITS: ${definingTraits}` : ''}
+    ${relationshipsDynamics ? `CHARACTER RELATIONSHIP DYNAMICS: ${relationshipsDynamics}` : ''}
+    ${worldGeography ? `WORLD GEOGRAPHY DETAILS: ${worldGeography}` : ''}
+    ${worldHistory ? `WORLD CHRONICLE / HISTORY: ${worldHistory}` : ''}
+    ${worldSocialStructures ? `WORLD SOCIAL STRUCTURES & SOCIETIES: ${worldSocialStructures}` : ''}
+
+    CUSTOM AI WRITING STYLE GUIDELINE:
+    - Language Style: ${styleTonePreset || 'Literary Drama'}
+    - Vocabulary Level: ${
+        vocabularyComplexity === 1 ? 'Simple, direct, straightforward dialogue and prose' :
+        vocabularyComplexity === 2 ? 'Accessible but textured, neat modern wording' :
+        vocabularyComplexity === 3 ? 'Sophisticated, rich literary English' :
+        vocabularyComplexity === 4 ? 'Highly literate, dense, elevated vocabulary' :
+        'Baroque, flowery, deeply ornate sensory wording'
+    }
+    - Sentence Cadence: ${
+        sentenceRhythm === 1 ? 'Short, snappy, action-oriented staccato rhythm' :
+        sentenceRhythm === 2 ? 'Crisp, neat, declarative sentences' :
+        sentenceRhythm === 3 ? 'Balanced pacing blending snappy action and rich descriptions' :
+        sentenceRhythm === 4 ? 'Longer, winding compound sentences with fluid descriptive flow' :
+        'Highly lyrical, periodic, floating, dreaming periodic sentence chains'
+    }
+
     ${customBasis ? `STARTING BASIS: ${customBasis}\nCRITICAL: You MUST use this custom basis as the foundation for the first scene. Respect the user's creative direction.` : ''}
     
     RELATIONSHIPS DIRECTIVES (if applicable):
@@ -937,6 +991,18 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
   const customTwist = typeof req.body?.customTwist === 'string' ? req.body.customTwist.trim() : "";
   const simulationMode = typeof req.body?.simulationMode === 'string' ? req.body.simulationMode.trim() : "standard";
   const isWhatIfMode = !!req.body?.isWhatIfMode;
+
+  // Advanced narrative control and style parameters
+  const characterMotive = typeof req.body?.characterMotive === 'string' ? req.body.characterMotive.trim() : "";
+  const definingTraits = typeof req.body?.definingTraits === 'string' ? req.body.definingTraits.trim() : "";
+  const relationshipsDynamics = typeof req.body?.relationshipsDynamics === 'string' ? req.body.relationshipsDynamics.trim() : "";
+  const worldGeography = typeof req.body?.worldGeography === 'string' ? req.body.worldGeography.trim() : "";
+  const worldHistory = typeof req.body?.worldHistory === 'string' ? req.body.worldHistory.trim() : "";
+  const worldSocialStructures = typeof req.body?.worldSocialStructures === 'string' ? req.body.worldSocialStructures.trim() : "";
+  
+  const styleTonePreset = typeof req.body?.styleTonePreset === 'string' ? req.body.styleTonePreset.trim() : "";
+  const vocabularyComplexity = typeof req.body?.vocabularyComplexity === 'number' ? req.body.vocabularyComplexity : 3;
+  const sentenceRhythm = typeof req.body?.sentenceRhythm === 'number' ? req.body.sentenceRhythm : 3;
   
   const mode = simulationMode || "standard";
   const cacheKey = getCacheKey("continue", {
@@ -956,7 +1022,16 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     isFinalChoice, 
     customTwist,
     simulationMode,
-    isWhatIfMode
+    isWhatIfMode,
+    characterMotive,
+    definingTraits,
+    relationshipsDynamics,
+    worldGeography,
+    worldHistory,
+    worldSocialStructures,
+    styleTonePreset,
+    vocabularyComplexity,
+    sentenceRhythm
   });
   const cached = apiCache.get(cacheKey);
   if (cached) {
@@ -981,8 +1056,33 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
     PROTAGONIST ARCHETYPE: ${characterArchetype || 'unknown'}
     BACKSTORY: ${backstory || 'To be discovered'}
     PLOT COMPLEXITY: ${plotComplexity || 'complex'}
-    TONE: ${tone || 'intense'}
+    TONE: ${styleTonePreset || tone || 'intense'} (Adjust the atmosphere and prose density to match this style).
     SIMULATION MODE: ${mode.toUpperCase()} (Process with appropriate depth and analytical detail)
+    
+    ${characterMotive ? `PROTAGONIST MOTIVES: ${characterMotive}` : ''}
+    ${definingTraits ? `PROTAGONIST DEFINING TRAITS: ${definingTraits}` : ''}
+    ${relationshipsDynamics ? `CHARACTER RELATIONSHIP DYNAMICS: ${relationshipsDynamics}` : ''}
+    ${worldGeography ? `WORLD GEOGRAPHY DETAILS: ${worldGeography}` : ''}
+    ${worldHistory ? `WORLD CHRONICLE / HISTORY: ${worldHistory}` : ''}
+    ${worldSocialStructures ? `WORLD SOCIAL STRUCTURES & SOCIETIES: ${worldSocialStructures}` : ''}
+
+    CUSTOM AI WRITING STYLE GUIDELINE:
+    - Language Style: ${styleTonePreset || 'Literary Drama'}
+    - Vocabulary Level: ${
+        vocabularyComplexity === 1 ? 'Simple, direct, straightforward dialogue and prose' :
+        vocabularyComplexity === 2 ? 'Accessible but textured, neat modern wording' :
+        vocabularyComplexity === 3 ? 'Sophisticated, rich literary English' :
+        vocabularyComplexity === 4 ? 'Highly literate, dense, elevated vocabulary' :
+        'Baroque, flowery, deeply ornate sensory wording'
+    }
+    - Sentence Cadence: ${
+        sentenceRhythm === 1 ? 'Short, snappy, action-oriented staccato rhythm' :
+        sentenceRhythm === 2 ? 'Crisp, neat, declarative sentences' :
+        sentenceRhythm === 3 ? 'Balanced pacing blending snappy action and rich descriptions' :
+        sentenceRhythm === 4 ? 'Longer, winding compound sentences with fluid descriptive flow' :
+        'Highly lyrical, periodic, floating, dreaming periodic sentence chains'
+    }
+
     ${customBasis ? `ORIGINAL BASIS: ${customBasis}` : ''}
     
     RELATIONSHIPS DIRECTIVES (if applicable):
@@ -1940,6 +2040,173 @@ app.get("/api/story/async-job/:id", (req, res) => {
     return res.status(404).json({ error: "No such async task found in the executor system." });
   }
   res.json(status);
+});
+
+// Daily Prompt Integration Caching and Fallbacks
+const DAILY_PROMPT_CACHE_FILE = path.join(process.cwd(), "daily-prompt-cache.json");
+
+const defaultFallbackPrompts = [
+  {
+    title: "The Neon Siphon",
+    genre: "crime",
+    tagline: "A memory smuggler discovers their own name on a classified corporate hitlist.",
+    concept: "In the rain-drenched cyber-district of Neo-Kowloon, synthetic memories of elite targets are traded like gold. You are a smuggler who just decoded an encrypted file.",
+    archetype: "Disgraced Alchemical archivist turned memory courier",
+    backstory: "You used to compile logs for the Ministry of Whispers before you were framed for leaking the Grand Registry of souls. Now you operate in the lower slums.",
+    customBasis: "A dying runner hands you an encrypted memory disc. When you plug it into your neural canal, the first file reads: 'Target 09-A: Yourself, scheduled for immediate purge at dawn.'",
+    characterMotive: "Identify who sold you out and discover what memory is locked inside the disc.",
+    definingTraits: "Cynical, razor-sharp reflexes, possess a mechanical synthetic hand that sparks when agitated.",
+    relationshipsDynamics: "Distrustful of your former Ministry supervisor, but have a fragile partnership with a street doctor who tunes your cybernetics.",
+    worldGeography: "Neo-Kowloon: a sprawling vertical maze of rust and high-frequency neon, drowning in perpetual chemical mist.",
+    worldHistory: "Formed after the great collapse of the atmospheric shields, forcing humanity into steel towers.",
+    worldSocialStructures: "Controlled by the Corporate Triad. Unregistered citizens are cast into the flooded sub-levels.",
+    tone: "intense"
+  },
+  {
+    title: "Echoes of the Sunken Spindle",
+    genre: "paranormal",
+    tagline: "A deaf lighthouse keeper hears a strange, beautiful melody rising from the dark tide.",
+    concept: "In a jagged coastal village shrouded in saltwater fog, an ancient clockwork lighthouse hums. But the tide is whispering a language that shouldn't exist.",
+    archetype: "Sorrowful lighthouse keeper who lost her hearing to the siren waters",
+    backstory: "You took over the lighthouse after your brother drowned. People say he became part of the 'Silent Tide', but you believe he is still sending messages.",
+    customBasis: "The lighthouse clockwork halts at midnight. In the absolute quiet, you suddenly hear a clear, echoing lullaby ringing in your head. Looking down, the seawater beneath the rocks is glowing with bioluminescent runes.",
+    characterMotive: "Uncover the secret of the Sunken Spindle and find the truth behind your brother's disappearance.",
+    definingTraits: "Empathetic, highly sensitive to vibrations, plagued by vivid dreams of underwater cathedrals.",
+    relationshipsDynamics: "The local priest warns you to never look too deep into the water; the harbor master seems to be secretly hoarding glowing salt.",
+    worldGeography: "Cape Mourn, a cold, wind-swept rocky peninsula characterized by vertical cliffs and towering black-stone architecture.",
+    worldHistory: "Fifty years ago, a colossal temple belonging to a forgotten sea deity sank, shifting the coastal tides forever.",
+    worldSocialStructures: "The village is highly isolated, governed by a fishing covenant that fears any technology outside of the lighthouse.",
+    tone: "melancholic"
+  },
+  {
+    title: "Stardust & Slander",
+    genre: "romance",
+    tagline: "Two rival astral cartographers are forced to share a single vessel heading into an uncharted nebula.",
+    concept: "A thrilling adventure across the celestial heavens, where two intellectual rivals must cooperate to map a newly emerged rift while denying their growing attachment.",
+    archetype: "Despised Royal Astrologer with a secret rebellion legacy",
+    backstory: "Your family's maps were banned by the High Chancellor. You've spent years working in secret to prove that your father's astral routes are real and safe.",
+    customBasis: "The Crown forces you onto a high-speed sky-cutter ship to map the Orion Rift, only to discover your chief aristocratic rival, Julian, has been appointed as your co-captain. The locks click shut behind you.",
+    characterMotive: "Map the nebula first to secure your familial pension and escape Julian's infuriatingly charming scrutiny.",
+    definingTraits: "Brilliant, stubborn, carrying a gold astrolabe that whispers star coordinates.",
+    relationshipsDynamics: "Julien thinks you're reckless, yet he keeps stepping between you and the solar wind; the sky-cutter crew loyalists are suspicious of your lineage.",
+    worldGeography: "The Orion Celestial Sea, a breathtaking expanse of pink cosmic dust, floating asteroids, and solar jet streams.",
+    worldHistory: "The Silver Treaty united the planetary baronies, but stellar piracy and cartograph wars are secretly brewing.",
+    worldSocialStructures: "Aristocratic cartographers hold supreme social clout; map-making is treated as a divine art.",
+    tone: "whimsical"
+  }
+];
+
+function getCachedDailyPrompt(todayStr: string) {
+  try {
+    if (fs.existsSync(DAILY_PROMPT_CACHE_FILE)) {
+      const content = fs.readFileSync(DAILY_PROMPT_CACHE_FILE, "utf-8");
+      const cache = JSON.parse(content);
+      if (cache && cache.date === todayStr && cache.prompt) {
+        return cache.prompt;
+      }
+    }
+  } catch (error) {
+    console.error("Error reading daily prompt cache file:", error);
+  }
+  return null;
+}
+
+function setCachedDailyPrompt(todayStr: string, prompt: any) {
+  try {
+    fs.writeFileSync(DAILY_PROMPT_CACHE_FILE, JSON.stringify({ date: todayStr, prompt }), "utf-8");
+  } catch (error) {
+    console.error("Error writing daily prompt cache file:", error);
+  }
+}
+
+app.get("/api/story/daily-prompt", async (req, res) => {
+  const todayStr = new Date().toISOString().split('T')[0];
+  
+  // Try loading from JSON file cache
+  const cachedPrompt = getCachedDailyPrompt(todayStr);
+  if (cachedPrompt) {
+    console.log(`[DailyPrompt] Loaded cached prompt for date: ${todayStr}`);
+    return res.json({ date: todayStr, prompt: cachedPrompt });
+  }
+
+  const promptText = `
+    You are the Daily Chronicle Scribe, a master narrative architect.
+    Your mission is to generate a highly detailed, creative, and immersive story starting scenario for the daily challenge on date: ${todayStr}.
+    We need this starting path to spark maximum creative inspiration. Pick randomly or creatively select one of our three main genres: "crime" (corresponds to True Crime Noir), "romance" (corresponds to Rose & Rapture), or "paranormal" (corresponds to Veiled Realms).
+    Ensure the premise is extremely high fidelity, completely original, avoiding all cliches or overused tropes.
+    
+    Format the response as a JSON object matching this schema exactly:
+    - "title": A catchy, evocative, atmospheric title for today's scenario.
+    - "genre": The chosen genre. MUST be exactly either "crime", "romance", or "paranormal".
+    - "tagline": A single compelling line summarizing the starting scenario, like a movie tagline.
+    - "concept": Detailed summary of today's narrative premise (2-3 sentences).
+    - "archetype": A detailed, unique character archetype description (e.g. 'A deaf safe-cracker who feels the micro-vibrations of brass gear locks').
+    - "backstory": A rich, haunting character backstory or past mystery.
+    - "customBasis": The dramatic, shocking inciting incident or hook to start from. Must be highly actionable.
+    - "characterMotive": The protagonist's primary drive or goal.
+    - "definingTraits": A comma-separated list of 3-4 defining personality traits.
+    - "relationshipsDynamics": A description of relationship dynamics with supporting NPCs or factions.
+    - "worldGeography": Description of the setting's atmosphere, geography, or visuals.
+    - "worldHistory": Short historical chronicle or historical background of the world.
+    - "worldSocialStructures": Deep details about the social rules, laws, or power structures.
+    - "tone": Suggested mood/tone of the chronicle (e.g., "intense", "melancholic", "whimsical").
+  `;
+
+  try {
+    console.log(`[DailyPrompt] Cache missed for date: ${todayStr}. Initiating Gemini synthesis...`);
+    const response = await generateContentWithFallback({
+      primaryModel: "gemini-3.5-flash", // Good for creative prompt generation
+      contents: promptText,
+      config: {
+        temperature: 1.0, // High flexibility & creativity
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            genre: { type: Type.STRING },
+            tagline: { type: Type.STRING },
+            concept: { type: Type.STRING },
+            archetype: { type: Type.STRING },
+            backstory: { type: Type.STRING },
+            customBasis: { type: Type.STRING },
+            characterMotive: { type: Type.STRING },
+            definingTraits: { type: Type.STRING },
+            relationshipsDynamics: { type: Type.STRING },
+            worldGeography: { type: Type.STRING },
+            worldHistory: { type: Type.STRING },
+            worldSocialStructures: { type: Type.STRING },
+            tone: { type: Type.STRING }
+          },
+          required: [
+            "title", "genre", "tagline", "concept", "archetype", "backstory", "customBasis",
+            "characterMotive", "definingTraits", "relationshipsDynamics", "worldGeography", "worldHistory", "worldSocialStructures", "tone"
+          ]
+        }
+      }
+    });
+
+    if (response && response.text) {
+      const generated = JSON.parse(response.text.trim());
+      // Sanitize/validate genre values so we don't break the client
+      const g = String(generated.genre || "").toLowerCase();
+      if (g !== "crime" && g !== "romance" && g !== "paranormal") {
+        generated.genre = ["crime", "romance", "paranormal"][(new Date().getDay()) % 3];
+      } else {
+        generated.genre = g;
+      }
+      
+      setCachedDailyPrompt(todayStr, generated);
+      return res.json({ date: todayStr, prompt: generated });
+    } else {
+      throw new Error("Empty response from Gemini GenAI");
+    }
+  } catch (error) {
+    console.error("Failed to generate original daily prompt, using high fidelity fallback:", error);
+    const dayOfWeek = new Date().getDay();
+    const fallback = defaultFallbackPrompts[dayOfWeek % defaultFallbackPrompts.length];
+    return res.json({ date: todayStr, prompt: fallback, isFallback: true });
+  }
 });
 
 // Global Error Handling Middleware (Production Hardening & Crash Shield)

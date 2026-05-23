@@ -18,6 +18,7 @@ import {
   Moon,
   Eye,
   Zap,
+  Cpu,
   LogIn,
   LogOut,
   User as UserIcon,
@@ -47,6 +48,7 @@ import {
   Bookmark,
   Trash,
   GitBranch,
+  FileText,
 } from "lucide-react";
 import {
   auth,
@@ -60,6 +62,7 @@ import {
   signOut,
   onAuthStateChanged,
   User,
+  GoogleAuthProvider,
 } from "firebase/auth";
 
 const AtmosphericEffects = lazy(() =>
@@ -95,6 +98,8 @@ import { CodexLoreGlossary } from "./components/CodexLoreGlossary";
 import { VoiceNarratorPanel } from "./components/VoiceNarratorPanel";
 import { AtmosphericFateLoader } from "./components/AtmosphericFateLoader";
 import { BookOpen } from "lucide-react";
+import { MonetizationHub } from "./components/MonetizationHub";
+import { VisualSyncIndicator } from "./components/VisualSyncIndicator";
 import {
   doc,
   collection,
@@ -105,13 +110,22 @@ import {
   onSnapshot,
   serverTimestamp,
   limit,
+  updateDoc,
+  increment,
+  arrayUnion,
+  arrayRemove,
 } from "firebase/firestore";
 import { 
   setDocSafe as setDoc, 
   addDocSafe as addDoc,
   getDocSafe as getDoc,
-  getDocsSafe as getDocs
+  getDocsSafe as getDocs,
+  uploadImageToStorage,
+  deleteStepImageFromStorage,
+  cleanupOrphanedStorageImages,
+  cleanupAllStoryImagesFromStorage
 } from "./lib/firebase";
+import { exportToGoogleDocs } from "./lib/googleDocs";
 
 interface Choice {
   text: string;
@@ -269,6 +283,15 @@ function App() {
     tone: StoryTone;
     isAdultContent: boolean;
     customBasis: string;
+    characterMotive: string;
+    definingTraits: string;
+    relationshipsDynamics: string;
+    worldGeography: string;
+    worldHistory: string;
+    worldSocialStructures: string;
+    styleTonePreset: string;
+    vocabularyComplexity: number;
+    sentenceRhythm: number;
   }>({
     length: "medium",
     archetype: "",
@@ -277,6 +300,15 @@ function App() {
     tone: "intense",
     isAdultContent: false,
     customBasis: "",
+    characterMotive: "",
+    definingTraits: "",
+    relationshipsDynamics: "",
+    worldGeography: "",
+    worldHistory: "",
+    worldSocialStructures: "",
+    styleTonePreset: "intense",
+    vocabularyComplexity: 3,
+    sentenceRhythm: 3,
   });
   const [customActionText, setCustomActionText] = useState("");
   const [showParameterSetup, setShowParameterSetup] = useState(false);
@@ -285,6 +317,8 @@ function App() {
   );
   const [aiPremises, setAiPremises] = useState<any[]>([]);
   const [generatingPremises, setGeneratingPremises] = useState(false);
+  const [communityEchoes, setCommunityEchoes] = useState<any[]>([]);
+  const [loadingCommunity, setLoadingCommunity] = useState(false);
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
   const [isSceneFadingOut, setIsSceneFadingOut] = useState(false);
   const [history, setHistory] = useState<
@@ -306,8 +340,79 @@ function App() {
   const [showCodex, setShowCodex] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
-  const [syncStatus, setSyncStatus] = useState<{ status: "online" | "offline_active" | "online_synced"; message: string }>({ status: "online", message: "" });
+  const [syncStatus, setSyncStatus] = useState<{ status: "online" | "offline_active" | "online_synced" | "syncing" | "error"; message: string; latency?: number }>({ status: "online", message: "" });
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  // Daily Prompt Integration states and methods
+  const [dailyPrompt, setDailyPrompt] = useState<{
+    date: string;
+    prompt: {
+      title: string;
+      genre: "crime" | "romance" | "paranormal";
+      tagline: string;
+      concept: string;
+      archetype: string;
+      backstory: string;
+      customBasis: string;
+      characterMotive: string;
+      definingTraits: string;
+      relationshipsDynamics: string;
+      worldGeography: string;
+      worldHistory: string;
+      worldSocialStructures: string;
+      tone: string;
+    };
+  } | null>(null);
+  const [loadingDailyPrompt, setLoadingDailyPrompt] = useState(false);
+  const [isDailyPromptActive, setIsDailyPromptActive] = useState(false);
+
+  const fetchDailyPrompt = async () => {
+    setLoadingDailyPrompt(true);
+    try {
+      const response = await fetch("/api/story/daily-prompt");
+      if (!response.ok) throw new Error("Could not retrieve daily prompt.");
+      const data = await response.json();
+      setDailyPrompt(data);
+    } catch (err: any) {
+      console.error("[DailyPrompt] Error loading daily prompt:", err);
+    } finally {
+      setLoadingDailyPrompt(false);
+    }
+  };
+
+  const selectDailyPrompt = () => {
+    if (!dailyPrompt || !dailyPrompt.prompt) return;
+    const { prompt } = dailyPrompt;
+    setIsDailyPromptActive(true);
+    setGenre(prompt.genre);
+    setStoryParameters({
+      length: "medium",
+      archetype: prompt.archetype || "",
+      backstory: prompt.backstory || "",
+      complexity: "complex",
+      tone: (prompt.tone as StoryTone) || "intense",
+      isAdultContent: false,
+      customBasis: prompt.customBasis || "",
+      characterMotive: prompt.characterMotive || "",
+      definingTraits: prompt.definingTraits || "",
+      relationshipsDynamics: prompt.relationshipsDynamics || "",
+      worldGeography: prompt.worldGeography || "",
+      worldHistory: prompt.worldHistory || "",
+      worldSocialStructures: prompt.worldSocialStructures || "",
+      styleTonePreset: prompt.tone || "intense",
+      vocabularyComplexity: 3,
+      sentenceRhythm: 3,
+    });
+    setPremiseMode("custom");
+    setShowParameterSetup(true);
+    
+    // Jump scroll smoothly to top so the parameter dashboard starts cleanly
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    fetchDailyPrompt();
+  }, []);
 
   useEffect(() => {
     const handleSyncStatus = (e: Event) => {
@@ -482,6 +587,9 @@ function App() {
   const [showCreatorPanel, setShowCreatorPanel] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [sharedLink, setSharedLink] = useState<string | null>(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [isExportingGoogleDoc, setIsExportingGoogleDoc] = useState(false);
+  const [exportedGoogleDocUrl, setExportedGoogleDocUrl] = useState<string | null>(null);
 
   const [choicePreviews, setChoicePreviews] = useState<Record<number, boolean>>({});
   const [microActionText, setMicroActionText] = useState<string | null>(null);
@@ -919,6 +1027,15 @@ function App() {
           tone: (storyData.tone as StoryTone) || "intense",
           isAdultContent: storyData.isAdultContent || false,
           customBasis: storyData.customBasis || "",
+          characterMotive: storyData.characterMotive || "",
+          definingTraits: storyData.definingTraits || "",
+          relationshipsDynamics: storyData.relationshipsDynamics || "",
+          worldGeography: storyData.worldGeography || "",
+          worldHistory: storyData.worldHistory || "",
+          worldSocialStructures: storyData.worldSocialStructures || "",
+          styleTonePreset: storyData.styleTonePreset || "intense",
+          vocabularyComplexity: storyData.vocabularyComplexity || 3,
+          sentenceRhythm: storyData.sentenceRhythm || 3,
         });
 
         // Fetch steps
@@ -1073,6 +1190,8 @@ function App() {
             const stepsSnap = await getDocs(stepsRef);
             for (const docSnap of stepsSnap.docs) {
               await deleteDoc(docSnap.ref);
+              // Clean up corresponding storage image
+              await deleteStepImageFromStorage(user.uid, storyId, docSnap.id);
             }
 
             // 3. Append the alternate timeline nodes
@@ -1081,7 +1200,8 @@ function App() {
               const cleanUrl = await ensureCompactImageUrl(
                 step.imageUrl,
                 step.imagePrompt || step.sceneTitle || "",
-                step.mood || "mystery"
+                step.mood || "mystery",
+                `restored_node_${i}_${Date.now().toString().substring(8)}`
               );
               await addDoc(stepsRef, {
                 sceneTitle: step.sceneTitle,
@@ -1120,6 +1240,15 @@ function App() {
           tone: (storyData.tone as StoryTone) || "intense",
           isAdultContent: storyData.isAdultContent || false,
           customBasis: storyData.customBasis || "",
+          characterMotive: storyData.characterMotive || "",
+          definingTraits: storyData.definingTraits || "",
+          relationshipsDynamics: storyData.relationshipsDynamics || "",
+          worldGeography: storyData.worldGeography || "",
+          worldHistory: storyData.worldHistory || "",
+          worldSocialStructures: storyData.worldSocialStructures || "",
+          styleTonePreset: storyData.styleTonePreset || "intense",
+          vocabularyComplexity: storyData.vocabularyComplexity || 3,
+          sentenceRhythm: storyData.sentenceRhythm || 3,
         });
         setConsequences(storyData.consequences || {});
         setStoryMilestones(storyData.storyMilestones || []);
@@ -1286,6 +1415,8 @@ function App() {
       // Prune elements starting from stepIndex + 1
       for (let i = stepIndex + 1; i < stepsWithDocs.length; i++) {
         await deleteDoc(stepsWithDocs[i].ref);
+        // Clean up corresponding storage image
+        await deleteStepImageFromStorage(user.uid, currentStoryId, stepsWithDocs[i].docId);
       }
       
       console.log(`Pruned ${stepsWithDocs.length - (stepIndex + 1)} steps from Firestore.`);
@@ -1383,6 +1514,16 @@ function App() {
           tone: storyParameters.tone,
           isAdultContent: storyParameters.isAdultContent,
           customBasis: storyParameters.customBasis,
+          // Advanced elements
+          characterMotive: storyParameters.characterMotive,
+          definingTraits: storyParameters.definingTraits,
+          relationshipsDynamics: storyParameters.relationshipsDynamics,
+          worldGeography: storyParameters.worldGeography,
+          worldHistory: storyParameters.worldHistory,
+          worldSocialStructures: storyParameters.worldSocialStructures,
+          styleTonePreset: storyParameters.styleTonePreset,
+          vocabularyComplexity: storyParameters.vocabularyComplexity,
+          sentenceRhythm: storyParameters.sentenceRhythm
         }),
       });
       if (!response.ok) throw new Error("Failed to start story");
@@ -1589,6 +1730,16 @@ function App() {
           customTwist: appMode === "creator" ? customTwist : "",
           simulationMode: settings.simulationMode || "standard",
           isWhatIfMode: isWhatIfMode || false,
+          // Advanced elements
+          characterMotive: storyParameters.characterMotive,
+          definingTraits: storyParameters.definingTraits,
+          relationshipsDynamics: storyParameters.relationshipsDynamics,
+          worldGeography: storyParameters.worldGeography,
+          worldHistory: storyParameters.worldHistory,
+          worldSocialStructures: storyParameters.worldSocialStructures,
+          styleTonePreset: storyParameters.styleTonePreset,
+          vocabularyComplexity: storyParameters.vocabularyComplexity,
+          sentenceRhythm: storyParameters.sentenceRhythm
         }),
       });
       if (!response.ok) throw new Error("Failed to continue story");
@@ -1838,6 +1989,66 @@ function App() {
     }
   };
 
+  // Compile and Export Bookstore-Quality Print Google Doc
+  const handleExportGoogleDoc = async () => {
+    if (!currentNode) {
+      alert("No active storyline available to compile.");
+      return;
+    }
+    
+    const confirmed = window.confirm(
+      "Do you want to create a bookstore-quality document in Google Docs with your story narrative, choices, character relationships, and cinematic images?"
+    );
+    if (!confirmed) return;
+
+    setIsExportingGoogleDoc(true);
+    setExportedGoogleDocUrl(null);
+
+    try {
+      let token = googleAccessToken;
+      
+      if (!token) {
+        console.log("No token in cache, launching Google OAuth popup...");
+        const result = await signInWithPopup(auth, googleProvider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        token = credential?.accessToken || null;
+        if (token) {
+          setGoogleAccessToken(token);
+        } else {
+          throw new Error("Failed to receive Google access credential from provider.");
+        }
+      }
+
+      const activeStory = {
+        id: currentStoryId || "unknown",
+        genre: genre,
+        characterArchetype: storyParameters.archetype,
+        customBasis: storyParameters.customBasis,
+        backstory: storyParameters.backstory,
+        tone: storyParameters.tone,
+        complexity: storyParameters.complexity
+      };
+
+      const result = await exportToGoogleDocs(
+        token!,
+        activeStory,
+        allSteps,
+        relationships,
+        storyMilestones,
+        consequences,
+        user?.displayName || "Narrator Emeritus"
+      );
+
+      setExportedGoogleDocUrl(result.docUrl);
+      console.log(`Successfully generated Google Document: ${result.title} details inside ${result.docUrl}`);
+    } catch (err: any) {
+      console.error("Failed to export Google Document", err);
+      setError(`Google Docs creation failed: ${err.message || err}`);
+    } finally {
+      setIsExportingGoogleDoc(false);
+    }
+  };
+
   // Publish / Share Echo Pathway
   const handleShareStory = async () => {
     if (!user || !currentStoryId) return;
@@ -1970,7 +2181,16 @@ function App() {
           complexity: storyData.plotComplexity || "complex",
           tone: storyData.tone || "intense",
           isAdultContent: storyData.isAdultContent || false,
-          customBasis: storyData.customBasis || ""
+          customBasis: storyData.customBasis || "",
+          characterMotive: storyData.characterMotive || "",
+          definingTraits: storyData.definingTraits || "",
+          relationshipsDynamics: storyData.relationshipsDynamics || "",
+          worldGeography: storyData.worldGeography || "",
+          worldHistory: storyData.worldHistory || "",
+          worldSocialStructures: storyData.worldSocialStructures || "",
+          styleTonePreset: storyData.styleTonePreset || "intense",
+          vocabularyComplexity: storyData.vocabularyComplexity || 3,
+          sentenceRhythm: storyData.sentenceRhythm || 3
         });
         
         // Fetch steps
@@ -1986,6 +2206,186 @@ function App() {
       console.error(e);
     }
   };
+
+  // Branch Off & Claim this Destiny function
+  const handleBranchOff = async () => {
+    if (!user) {
+      setError("Please log in with Google first to branch off and claim this destiny!");
+      return;
+    }
+    if (!sharedEchoSnapshot) return;
+    
+    setLoading(true);
+    setError(null);
+    try {
+      const snap = sharedEchoSnapshot;
+      let g = snap.genre || "mystery";
+      
+      // Create new story metadata under player's credentials
+      const storyRef = await addDoc(
+        collection(db, "users", user.uid, "stories"),
+        {
+          userId: user.uid,
+          genre: g,
+          storyLength: snap.storyLength || "medium",
+          characterArchetype: snap.characterArchetype || "unknown",
+          backstory: snap.backstory || "To be discovered...",
+          plotComplexity: snap.plotComplexity || "complex",
+          tone: snap.tone || "intense",
+          isAdultContent: !!snap.isAdultContent,
+          customBasis: snap.customBasis || "",
+          // Advanced parameters
+          characterMotive: snap.characterMotive || "",
+          definingTraits: snap.definingTraits || "",
+          relationshipsDynamics: snap.relationshipsDynamics || "",
+          worldGeography: snap.worldGeography || "",
+          worldHistory: snap.worldHistory || "",
+          worldSocialStructures: snap.worldSocialStructures || "",
+          styleTonePreset: snap.styleTonePreset || "intense",
+          vocabularyComplexity: snap.vocabularyComplexity || 3,
+          sentenceRhythm: snap.sentenceRhythm || 3,
+          status: "active",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          branchedFrom: snap.id || null, // track saga genealogy
+          storyMilestones: snap.storyMilestones || [],
+          consequences: snap.consequences || {},
+        }
+      );
+      
+      // Clone choices / nodes steps structure
+      const stepsList = snap.stepsSnapshot || [];
+      const updatedSteps: any[] = [];
+      
+      for (let i = 0; i < stepsList.length; i++) {
+        const step = stepsList[i];
+        const stepData = {
+          sceneTitle: step.sceneTitle || "Scene Branch",
+          sceneDescription: step.sceneDescription || "",
+          imageUrl: step.imageUrl || null,
+          imagePrompt: step.imagePrompt || null,
+          choiceTaken: step.choiceTaken || null,
+          choices: step.choices || [],
+          mood: step.mood || "mysterious",
+          intensity: step.intensity || 50,
+          isEnding: !!step.isEnding,
+          endingType: step.endingType || null,
+          mediaType: step.mediaType || "cinematic",
+          timestamp: serverTimestamp()
+        };
+        
+        await addDoc(
+          collection(db, "users", user.uid, "stories", storyRef.id, "steps"),
+          stepData
+        );
+        updatedSteps.push(stepData);
+      }
+      
+      // Sync game controls
+      setCurrentStoryId(storyRef.id);
+      setGenre(g === "True Crime Noir" ? "crime" : g === "Paranormal Occult Indie" ? "paranormal" : "romance");
+      setStoryParameters({
+        length: snap.storyLength || "medium",
+        archetype: snap.characterArchetype || "unknown",
+        backstory: snap.backstory || "To be discovered...",
+        complexity: snap.plotComplexity || "complex",
+        tone: snap.tone || "intense",
+        isAdultContent: !!snap.isAdultContent,
+        customBasis: snap.customBasis || "",
+        characterMotive: snap.characterMotive || "",
+        definingTraits: snap.definingTraits || "",
+        relationshipsDynamics: snap.relationshipsDynamics || "",
+        worldGeography: snap.worldGeography || "",
+        worldHistory: snap.worldHistory || "",
+        worldSocialStructures: snap.worldSocialStructures || "",
+        styleTonePreset: snap.styleTonePreset || "intense",
+        vocabularyComplexity: snap.vocabularyComplexity || 3,
+        sentenceRhythm: snap.sentenceRhythm || 3
+      });
+      
+      setAllSteps(updatedSteps);
+      if (updatedSteps.length > 0) {
+        setCurrentNode(updatedSteps[updatedSteps.length - 1] as StoryNode);
+      }
+      
+      // Clean guest state
+      setSharedEchoSnapshot(null);
+      window.history.pushState({}, "", window.location.pathname);
+    } catch (e: any) {
+      console.error("Failed to branch off saga: ", e);
+      setError("Failed to clone and branch this destiny. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCommunityEchoes = async () => {
+    setLoadingCommunity(true);
+    try {
+      const q = query(
+        collection(db, "shared_echoes"),
+        orderBy("createdAt", "desc"),
+        limit(24)
+      );
+      const snap = await getDocs(q);
+      const items = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCommunityEchoes(items);
+    } catch (e) {
+      console.error("Failed to load community echoes: ", e);
+    } finally {
+      setLoadingCommunity(false);
+    }
+  };
+
+  const handleLikeEcho = async (echoId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) {
+      setError("Please log in with Google first to like story echoes!");
+      return;
+    }
+    try {
+      const echoRef = doc(db, "shared_echoes", echoId);
+      const targetEcho = communityEchoes.find(item => item.id === echoId);
+      if (!targetEcho) return;
+
+      const hasLiked = (targetEcho.likesBy || []).includes(user.uid);
+
+      // Pessimistic update in UI state first for snappy feedback
+      setCommunityEchoes(prev => prev.map(item => {
+        if (item.id === echoId) {
+          const currentLikesBy = item.likesBy || [];
+          const updatedLikesBy = hasLiked
+            ? currentLikesBy.filter((id: string) => id !== user.uid)
+            : [...currentLikesBy, user.uid];
+          return {
+            ...item,
+            likesCount: Math.max(0, (item.likesCount || 0) + (hasLiked ? -1 : 1)),
+            likesBy: updatedLikesBy
+          };
+        }
+        return item;
+      }));
+
+      await updateDoc(echoRef, {
+        likesCount: hasLiked ? increment(-1) : increment(1),
+        likesBy: hasLiked ? arrayRemove(user.uid) : arrayUnion(user.uid)
+      });
+    } catch (err: any) {
+      console.error("Failed to update like status: ", err);
+      setError("Failed to register vote. Please check connection.");
+      // Rollback UI
+      loadCommunityEchoes();
+    }
+  };
+
+  useEffect(() => {
+    if (!genre && db) {
+      loadCommunityEchoes();
+    }
+  }, [genre, db]);
 
   // Leave active room
   const handleLeaveRoom = async () => {
@@ -2068,9 +2468,19 @@ function App() {
     url: string | null | undefined,
     prompt: string = "",
     mood: string = "mystery",
+    suggestedStepId?: string,
   ): Promise<string | null> => {
     if (!url) return null;
-    if (url.startsWith("data:image/") && url.length > 5000) {
+    if (url.startsWith("data:image/")) {
+      if (user) {
+        try {
+          const stepId = suggestedStepId || `restored-${crypto.randomUUID().substring(0, 8)}`;
+          const downloadUrl = await uploadImageToStorage(url, user.uid, currentStoryId || "default", stepId);
+          return downloadUrl;
+        } catch (err) {
+          console.error("Failed to upload base64 to Firebase Storage, using legacy cache flow as fallback:", err);
+        }
+      }
       try {
         const res = await fetch("/api/story/cache-base64", {
           method: "POST",
@@ -2234,9 +2644,8 @@ function App() {
       if (!response.ok) throw new Error("Failed to generate image");
       const data = await response.json();
       setGenerationProgress(100);
-      setCurrentNode((prev) =>
-        prev ? { ...prev, imageUrl: data.imageUrl, imageGenFailed: false } : null,
-      );
+
+      let finalImageUrl = data.imageUrl;
 
       // Update latest step with image URL if possible
       if (user && storyId) {
@@ -2251,6 +2660,14 @@ function App() {
         const q = query(stepsRef, orderBy("timestamp", "desc"), limit(1));
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
+          const stepDocId = snapshot.docs[0].id;
+          try {
+            console.log("Uploading newly generated image to Firebase Storage corresponding to step:", stepDocId);
+            finalImageUrl = await uploadImageToStorage(data.imageUrl, user.uid, storyId, stepDocId);
+          } catch (storageErr) {
+            console.error("Failed to upload generated image to Firebase Storage, using original URL:", storageErr);
+          }
+
           await setDoc(
             doc(
               db,
@@ -2259,21 +2676,25 @@ function App() {
               "stories",
               storyId,
               "steps",
-              snapshot.docs[0].id,
+              stepDocId,
             ),
             {
-              imageUrl: data.imageUrl,
+              imageUrl: finalImageUrl,
             },
             { merge: true },
           ).catch((err) =>
             handleFirestoreError(
               err,
               OperationType.UPDATE,
-              `users/${user.uid}/stories/${storyId}/steps/${snapshot.docs[0].id}`,
+              `users/${user.uid}/stories/${storyId}/steps/${stepDocId}`,
             ),
           );
         }
       }
+
+      setCurrentNode((prev) =>
+        prev ? { ...prev, imageUrl: finalImageUrl, imageGenFailed: false } : null,
+      );
     } catch (err: any) {
       console.error("Image gen failed", err);
       setError(`Image generation failed: ${err.message}`);
@@ -2305,6 +2726,7 @@ function App() {
       );
     }
     setGenre(null);
+    setIsDailyPromptActive(false);
     setStoryParameters({
       length: "medium",
       archetype: "",
@@ -2313,6 +2735,15 @@ function App() {
       tone: "intense",
       isAdultContent: false,
       customBasis: "",
+      characterMotive: "",
+      definingTraits: "",
+      relationshipsDynamics: "",
+      worldGeography: "",
+      worldHistory: "",
+      worldSocialStructures: "",
+      styleTonePreset: "intense",
+      vocabularyComplexity: 3,
+      sentenceRhythm: 3,
     });
     setCustomActionText("");
     setShowParameterSetup(false);
@@ -2321,6 +2752,49 @@ function App() {
     setError(null);
     setCurrentStoryId(null);
     setConsequences({});
+  };
+
+  const deleteStory = async (storyId: string) => {
+    if (!user) return;
+    const confirmDelete = window.confirm(
+      "Are you sure you want to dissolve this fate? This will permanently delete the story, its milestones, relationships, and all generated cinematic media from storage to save database quota."
+    );
+    if (!confirmDelete) return;
+
+    try {
+      setLoading(true);
+      // 1. Delete all step documents inside story in Firestore
+      const stepsRef = collection(db, "users", user.uid, "stories", storyId, "steps");
+      const stepsSnap = await getDocs(stepsRef);
+      for (const docSnap of stepsSnap.docs) {
+        await deleteDoc(docSnap.ref);
+      }
+
+      // 2. Delete the parent story document itself
+      await deleteDoc(doc(db, "users", user.uid, "stories", storyId));
+
+      // 3. Delete all associated storage images for this story to keep quota light
+      await cleanupAllStoryImagesFromStorage(user.uid, storyId);
+
+      // 4. Update memory state arrays cleanly
+      setUserStories((prev) => prev.filter((story) => story.id !== storyId));
+      if (currentStoryId === storyId) {
+        setAllSteps([]);
+        setHistory([]);
+        setGenre(null);
+        setCurrentNode(null);
+        setCurrentStoryId(null);
+        setConsequences({});
+        setStoryMilestones([]);
+        setRelationships({});
+      }
+      console.log(`Successfully dissolved timeline story ${storyId} and cleaned all associated storage media.`);
+    } catch (err) {
+      console.error("Failed to delete story:", err);
+      setError("Failed to delete story.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const themeClasses =
@@ -2433,7 +2907,7 @@ function App() {
       </Suspense>
 
       <AnimatePresence>
-        {syncStatus.status !== "online" && (
+        {(syncStatus.status === "offline_active" || syncStatus.status === "error") && (
           <motion.div
             initial={{ opacity: 0, y: -40, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -2890,93 +3364,113 @@ function App() {
                 </div>
               ) : (
                 userStories.map((story) => (
-                  <button
-                    key={story.id}
-                    onClick={() => loadStory(story.id)}
+                  <div 
+                    key={story.id} 
+                    className="relative group w-full"
                     onMouseEnter={() => setHoveredStoryId(story.id)}
                     onMouseLeave={() => setHoveredStoryId(null)}
-                    className={`w-full text-left p-6 rounded-3xl border transition-all group relative flex items-center justify-between overflow-hidden ${
-                      story.id === currentStoryId
-                        ? "border-sky-500 bg-sky-500/10"
-                        : genre === "romance"
-                          ? "border-rose-100 hover:bg-rose-50"
-                          : "border-white/5 hover:bg-white/5"
-                    }`}
                   >
-                    <div className="flex items-center gap-6 relative z-10">
-                      <div
-                        className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
-                          story.genre === "romance"
-                            ? "bg-rose-100 text-rose-500"
-                            : story.genre === "crime"
-                              ? "bg-sky-900/40 text-sky-400"
-                              : "bg-purple-900/40 text-purple-400"
-                        }`}
-                      >
-                        {story.genre === "romance" ? (
-                          <Heart className="w-8 h-8" />
-                        ) : story.genre === "crime" ? (
-                          <Skull className="w-8 h-8" />
-                        ) : (
-                          <Moon className="w-8 h-8" />
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-black uppercase tracking-widest opacity-40">
-                          {story.genre || "Unknown"}
-                        </p>
-                        <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
-                          {story.characterArchetype || "Untitled Narrative"}
-                        </h4>
-                        <div className="flex gap-4 items-center">
-                          <span className="text-[10px] font-mono opacity-60">
-                            {story.updatedAt?.seconds
-                              ? new Date(
-                                  story.updatedAt.seconds * 1000,
-                                ).toLocaleDateString()
-                              : "Active"}
-                          </span>
-                          <span
-                            className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
-                              story.status === "active"
-                                ? "bg-green-500/20 text-green-500"
-                                : "bg-gray-500/20 text-gray-500"
-                            }`}
-                          >
-                            {story.status}
-                          </span>
+                    <button
+                      onClick={() => loadStory(story.id)}
+                      className={`w-full text-left p-6 pr-24 rounded-3xl border transition-all relative flex items-center justify-between overflow-hidden cursor-pointer ${
+                        story.id === currentStoryId
+                          ? "border-sky-500 bg-sky-500/10"
+                          : genre === "romance"
+                            ? "border-rose-100 hover:bg-rose-50"
+                            : "border-white/5 hover:bg-white/5"
+                      }`}
+                    >
+                      <div className="flex items-center gap-6 relative z-10">
+                        <div
+                          className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
+                            story.genre === "romance"
+                              ? "bg-rose-100 text-rose-500"
+                              : story.genre === "crime"
+                                ? "bg-sky-900/40 text-sky-400"
+                                : "bg-purple-900/40 text-purple-400"
+                          }`}
+                        >
+                          {story.genre === "romance" ? (
+                            <Heart className="w-8 h-8" />
+                          ) : story.genre === "crime" ? (
+                            <Skull className="w-8 h-8" />
+                          ) : (
+                            <Moon className="w-8 h-8" />
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs font-black uppercase tracking-widest opacity-40">
+                            {story.genre || "Unknown"}
+                          </p>
+                          <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
+                            {story.characterArchetype || "Untitled Narrative"}
+                          </h4>
+                          <div className="flex gap-4 items-center">
+                            <span className="text-[10px] font-mono opacity-60">
+                              {story.updatedAt?.seconds
+                                ? new Date(
+                                    story.updatedAt.seconds * 1000,
+                                  ).toLocaleDateString()
+                                : "Active"}
+                            </span>
+                            <span
+                              className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
+                                story.status === "active"
+                                  ? "bg-green-500/20 text-green-500"
+                                  : "bg-gray-500/20 text-gray-500"
+                              }`}
+                            >
+                              {story.status}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <AnimatePresence>
-                      {hoveredStoryId === story.id && (
-                        <motion.div
-                          initial={{ opacity: 0, x: 20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 10 }}
-                          className={`absolute right-12 left-[12rem] top-0 bottom-0 py-6 px-10 flex flex-col justify-center bg-transparent pointer-events-none hidden md:flex`}
-                        >
-                          <div
-                            className={`h-full border-l pl-6 flex flex-col justify-center ${genre === "romance" ? "border-rose-100" : "border-white/10"}`}
+                      <AnimatePresence>
+                        {hoveredStoryId === story.id && (
+                          <motion.div
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                            className={`absolute right-24 left-[12rem] top-0 bottom-0 py-6 px-10 flex flex-col justify-center bg-transparent pointer-events-none hidden md:flex`}
                           >
-                            <p
-                              className={`text-[10px] uppercase font-black tracking-widest opacity-30 mb-2`}
+                            <div
+                              className={`h-full border-l pl-6 flex flex-col justify-center ${genre === "romance" ? "border-rose-100" : "border-white/10"}`}
                             >
-                              Premise Preview
-                            </p>
-                            <p
-                              className={`text-[11px] font-medium line-clamp-2 leading-relaxed italic ${genre === "romance" ? "text-rose-900/60" : "text-white/40"}`}
-                            >
-                              {story.customBasis ||
-                                story.backstory ||
-                                "The tapestry of fate is yet to be fully revealed..."}
-                            </p>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                    <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2 shrink-0" />
-                  </button>
+                              <p
+                                className={`text-[10px] uppercase font-black tracking-widest opacity-30 mb-2`}
+                              >
+                                Premise Preview
+                              </p>
+                              <p
+                                className={`text-[11px] font-medium line-clamp-2 leading-relaxed italic ${genre === "romance" ? "text-rose-900/60" : "text-white/40"}`}
+                              >
+                                {story.customBasis ||
+                                  story.backstory ||
+                                  "The tapestry of fate is yet to be fully revealed..."}
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2 shrink-0" />
+                    </button>
+
+                    {/* Clean Delete Button positioned absolutely over the item */}
+                    <button
+                      title="Dissolve Fate / Purge Media"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteStory(story.id);
+                      }}
+                      className={`absolute right-6 top-1/2 -translate-y-1/2 p-3.5 rounded-2xl border transition-all z-20 flex items-center justify-center cursor-pointer ${
+                        genre === "romance"
+                          ? "border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 hover:text-rose-800"
+                          : "border-white/10 text-white/50 bg-white/[0.03] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/30"
+                      }`}
+                    >
+                      <Trash className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -3090,20 +3584,28 @@ function App() {
       </div>
 
       {sharedEchoSnapshot && (
-        <div className="sticky top-0 z-[120] w-full bg-amber-500 text-slate-950 px-4 py-2.5 flex justify-between items-center font-bold text-xs shrink-0 shadow-lg text-left">
+        <div className="sticky top-0 z-[120] w-full bg-amber-500 text-slate-950 px-4 py-2.5 flex flex-col sm:flex-row gap-2 justify-between items-center font-bold text-xs shrink-0 shadow-lg text-left">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 animate-pulse text-amber-950" />
             <span>You are reading a Shared Public Echo created by <strong className="uppercase font-extrabold text-amber-950">{sharedEchoSnapshot.creatorName}</strong> ({sharedEchoSnapshot.genre || "Mystery"} | Archetype: {sharedEchoSnapshot.characterArchetype || "unknown"})</span>
           </div>
-          <button
-            onClick={() => {
-              setSharedEchoSnapshot(null);
-              window.history.pushState({}, "", window.location.pathname);
-            }}
-            className="px-3 py-1 hover:bg-slate-900 hover:text-white rounded transition-colors text-[10px] font-black uppercase cursor-pointer"
-          >
-            Close Preview
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleBranchOff}
+              className="px-4 py-1.5 bg-slate-950 text-amber-400 hover:bg-slate-900 border border-amber-400/20 rounded transition-colors text-[10px] font-black uppercase cursor-pointer flex items-center gap-1.5 shadow-md"
+            >
+              <GitBranch className="w-3.5 h-3.5" /> Branch Off & Claim Destiny
+            </button>
+            <button
+              onClick={() => {
+                setSharedEchoSnapshot(null);
+                window.history.pushState({}, "", window.location.pathname);
+              }}
+              className="px-3 py-1.5 hover:bg-slate-900 hover:text-white rounded transition-colors text-[10px] font-black uppercase cursor-pointer"
+            >
+              Close Preview
+            </button>
+          </div>
         </div>
       )}
 
@@ -3168,6 +3670,9 @@ function App() {
         
         {/* Responsive Header Controls */}
         <div className="flex items-center gap-2 sm:gap-4">
+          {user && (
+            <VisualSyncIndicator syncStatus={syncStatus} genre={genre} />
+          )}
           {/* Desktop HUD Panel */}
           {user && (
             <div className="hidden md:flex items-center gap-2">
@@ -3368,6 +3873,109 @@ function App() {
                     </span>
                   )}
                 </div>
+              )}
+
+              {/* Fate Complexity Gauge */}
+              {currentStoryId && (
+                <button
+                  id="fate-complexity-gauge-header"
+                  onClick={() => {
+                    const currentMode = settings.simulationMode || "standard";
+                    let nextMode: "light" | "standard" | "deep" = "standard";
+                    if (currentMode === "light") nextMode = "standard";
+                    else if (currentMode === "standard") nextMode = "deep";
+                    else nextMode = "light";
+                    setSettings((s) => ({ ...s, simulationMode: nextMode }));
+                  }}
+                  className="group relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] transition-all duration-300 text-left cursor-pointer select-none"
+                  title="Fate Complexity (Tap to Cycle Mode)"
+                >
+                  <Cpu className={`w-3.5 h-3.5 ${
+                    settings.simulationMode === "light" 
+                      ? "text-emerald-400 animate-pulse" 
+                      : settings.simulationMode === "deep" 
+                      ? "text-rose-400 animate-pulse" 
+                      : "text-amber-400 animate-pulse"
+                  }`} />
+                  <span className="text-[9px] uppercase font-mono tracking-widest text-white/50 hidden lg:inline">
+                    Complexity:
+                  </span>
+                  <span className={`text-[9px] font-black font-mono px-1.5 py-0.5 rounded ${
+                    settings.simulationMode === "light" 
+                      ? "text-emerald-400 bg-emerald-500/10" 
+                      : settings.simulationMode === "deep" 
+                      ? "text-rose-400 bg-rose-500/10" 
+                      : "text-amber-400 bg-amber-500/10"
+                  }`}>
+                    {settings.simulationMode === "light" ? "Light" : settings.simulationMode === "deep" ? "Deep" : "Std"}
+                  </span>
+                  
+                  {/* Micro horizontal progress bar indicator */}
+                  <div className="w-10 h-1.5 bg-white/10 rounded-full overflow-hidden hidden sm:block">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        settings.simulationMode === "light" 
+                          ? "bg-emerald-500 w-[15%]" 
+                          : settings.simulationMode === "deep" 
+                          ? "bg-rose-500 w-[90%]" 
+                          : "bg-amber-500 w-[45%]"
+                      }`}
+                    />
+                  </div>
+
+                  {/* Interactive Tooltip popup content on hover */}
+                  <div className="absolute right-0 top-full mt-2 hidden group-hover:flex flex-col w-56 p-3 bg-slate-950/95 border border-white/10 backdrop-blur-md rounded-2xl shadow-2xl z-50 text-left scale-95 origin-top-right group-hover:scale-100 transition-all duration-200 pointer-events-none">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fate Complexity</span>
+                      <span className={`text-[9px] font-mono font-extrabold uppercase px-1 rounded ${
+                        settings.simulationMode === "light" 
+                          ? "text-emerald-400 bg-emerald-500/15" 
+                          : settings.simulationMode === "deep" 
+                          ? "text-rose-400 bg-rose-500/15" 
+                          : "text-amber-400 bg-amber-500/15"
+                      }`}>
+                        {settings.simulationMode === "light" ? "Low" : settings.simulationMode === "deep" ? "High" : "Medium"}
+                      </span>
+                    </div>
+                    
+                    <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden mb-2">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          settings.simulationMode === "light" 
+                            ? "bg-emerald-500 w-[15%]" 
+                            : settings.simulationMode === "deep" 
+                            ? "bg-rose-500 w-[90%]" 
+                            : "bg-amber-500 w-[45%]"
+                        }`}
+                      />
+                    </div>
+
+                    <div className="space-y-1 text-[10px] font-mono text-gray-300">
+                      <div className="flex justify-between">
+                        <span className="opacity-60">Estimated Usage:</span>
+                        <span className="font-bold text-white">
+                          {settings.simulationMode === "light" ? "~400 tokens / low" : settings.simulationMode === "deep" ? "~3,200 tokens / extreme" : "~1,250 tokens / standard"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="opacity-60">Simulation Level:</span>
+                        <span className="font-bold text-amber-400 uppercase tracking-[0.05em]">
+                          {settings.simulationMode === "light" ? "Lite Virt" : settings.simulationMode === "deep" ? "Hyper-Reality" : "Standard"}
+                        </span>
+                      </div>
+                      <div className="text-[8px] opacity-40 leading-normal pt-1.5 border-t border-white/5">
+                        {settings.simulationMode === "light" 
+                          ? "Sub-simulation optimized. Safe & fast narrative loops." 
+                          : settings.simulationMode === "deep" 
+                          ? "Full cross-reference world tracking, extensive prompt memory, multi-layer NPC awareness." 
+                          : "Balanced narrative virtualization and visual alignment."}
+                      </div>
+                      <div className="text-[8px] text-amber-500/80 font-bold leading-normal pt-1 text-center border-t border-white/5 animate-pulse">
+                        * Click to Cycle Mode *
+                      </div>
+                    </div>
+                  </div>
+                </button>
               )}
             </div>
           )}
@@ -3693,6 +4301,7 @@ function App() {
                           src={step.imageUrl}
                           alt="Atmospheric Scene Visual"
                           referrerPolicy="no-referrer"
+                          loading="lazy"
                           className="w-full h-full object-cover"
                         />
                       </div>
@@ -3850,6 +4459,104 @@ function App() {
                 </div>
               </div>
 
+              {/* Daily Prompt Section */}
+              {dailyPrompt && dailyPrompt.prompt && (
+                <motion.div
+                  id="daily-prompt-card"
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.8, delay: 0.2 }}
+                  className="relative w-full max-w-4xl mx-auto rounded-[2.5rem] p-8 md:p-12 border border-amber-500/20 bg-[#0B0F19]/40 backdrop-blur-md overflow-hidden text-left shadow-2xl flex flex-col md:flex-row gap-8 justify-between items-stretch"
+                >
+                  {/* Subtle ambient light bursts in key corners */}
+                  <div className="absolute -top-12 -left-12 w-48 h-48 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
+                  <div className="absolute -bottom-12 -right-12 w-48 h-48 rounded-full bg-purple-500/10 blur-3xl pointer-events-none" />
+
+                  <div className="flex-1 flex flex-col justify-between space-y-6">
+                    <div>
+                      {/* Section Title Header */}
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                        </span>
+                        <span className="text-[10px] sm:text-xs font-mono font-bold tracking-[0.25em] text-amber-500 uppercase">
+                          Daily Chronicle Challenge
+                        </span>
+                        <span className="text-white/20 font-mono text-[10px] sm:text-xs tracking-wider">
+                          • {new Date(dailyPrompt.date + 'T12:00:00').toLocaleDateString(undefined, {
+                            month: "long",
+                            day: "numeric",
+                            year: "numeric"
+                          })}
+                        </span>
+                      </div>
+
+                      {/* Main Prominent Title */}
+                      <h3 className="text-3xl md:text-5xl font-serif font-semibold tracking-tight text-white mb-4 leading-tight">
+                        {dailyPrompt.prompt.title}
+                      </h3>
+
+                      {/* Tagline & Concept */}
+                      <p className="text-base font-light italic text-amber-100/90 leading-relaxed mb-4">
+                        "{dailyPrompt.prompt.tagline}"
+                      </p>
+                      
+                      <p className="text-xs text-white/50 leading-relaxed font-light line-clamp-3 md:line-clamp-none">
+                        {dailyPrompt.prompt.concept}
+                      </p>
+                    </div>
+
+                    {/* Meta stats row */}
+                    <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-white/5">
+                      {/* Genre Tag */}
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                          dailyPrompt.prompt.genre === "romance"
+                            ? "bg-rose-500/10 border-rose-500/20 text-rose-300"
+                            : dailyPrompt.prompt.genre === "crime"
+                              ? "bg-sky-500/10 border-sky-500/20 text-sky-300"
+                              : "bg-purple-500/10 border-purple-500/20 text-purple-300"
+                        }`}
+                      >
+                        {dailyPrompt.prompt.genre === "romance" && <Heart className="w-3 h-3 text-rose-400 fill-rose-400/20" />}
+                        {dailyPrompt.prompt.genre === "crime" && <Skull className="w-3 h-3 text-sky-400" />}
+                        {dailyPrompt.prompt.genre === "paranormal" && <Sparkles className="w-3 h-3 text-purple-400" />}
+                        {dailyPrompt.prompt.genre === "romance" ? "Rose & Rapture" : dailyPrompt.prompt.genre === "crime" ? "True Crime Noir" : "Veiled Realms"}
+                      </span>
+
+                      {/* Suggested Tone */}
+                      <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[9px] text-white/60 font-mono uppercase tracking-wider">
+                        Tone: {dailyPrompt.prompt.tone}
+                      </span>
+                      
+                      {/* Character Archetype */}
+                      <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[9px] text-white/60 font-mono uppercase tracking-wider hidden sm:inline-block">
+                        Role: {dailyPrompt.prompt.archetype ? dailyPrompt.prompt.archetype.split(" ")[0] : "Hero"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Embark/Action column */}
+                  <div className="flex flex-col justify-center items-stretch md:items-end w-full md:w-auto shrink-0 md:border-l md:border-white/5 md:pl-8">
+                    <button
+                      id="embark-daily-prompt-button"
+                      onClick={selectDailyPrompt}
+                      className="group cursor-pointer relative py-5 px-8 md:py-6 md:px-10 rounded-3xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold tracking-wider text-xs sm:text-sm uppercase shadow-xl hover:shadow-2xl hover:shadow-amber-500/20 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 pr-12 flex items-center justify-between gap-4"
+                    >
+                      <span className="text-left leading-tight">
+                        Embark on <br/>
+                        Daily Destiny
+                      </span>
+                      <ArrowRight className="w-5 h-5 absolute right-5 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                    <p className="text-[9px] font-mono text-white/30 text-center md:text-right mt-3 uppercase tracking-wider">
+                      Generates fresh narrative seeds daily
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
               {error && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm w-full max-w-xl mx-auto flex items-center justify-between z-10">
                   <span>{error}</span>
@@ -3936,6 +4643,137 @@ function App() {
                     </p>
                   </div>
                 </button>
+              </div>
+
+              {/* Bookstore monetization & support center */}
+              <div id="bookshop-monetization-widget" className="w-full max-w-5xl mx-auto mt-20 pt-16 border-t border-white/5 z-10">
+                <MonetizationHub
+                  user={user}
+                  activeGenre={hoveredGenre}
+                  triggerNotification={(msg) => {
+                    console.log("[TBR Support Hub]:", msg);
+                  }}
+                />
+              </div>
+
+              {/* Global Community Sagas Gallery */}
+              <div id="community-sagas-gallery" className="w-full max-w-5xl mx-auto mt-20 pt-16 border-t border-white/5 z-10 text-left">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-10">
+                  <div>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-[0.3em] text-amber-500/80 mb-2 block">
+                      Chronicles Shared by Creators
+                    </span>
+                    <h2 className="text-3xl font-serif font-medium tracking-tight text-white animate-fadeIn">
+                      Global Community Sagas
+                    </h2>
+                  </div>
+                  <button
+                    onClick={loadCommunityEchoes}
+                    disabled={loadingCommunity}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full text-xs font-bold uppercase tracking-wider transition-all border border-white/10 cursor-pointer"
+                  >
+                    <RefreshCcw className={`w-3.5 h-3.5 ${loadingCommunity ? "animate-spin text-amber-400" : ""}`} />
+                    Refresh Gallery
+                  </button>
+                </div>
+
+                {loadingCommunity && communityEchoes.length === 0 ? (
+                  <div className="py-24 flex flex-col items-center justify-center gap-4 text-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-amber-500 opacity-50" />
+                    <p className="text-xs text-white/40 uppercase tracking-widest font-bold">Summoning community tapestries...</p>
+                  </div>
+                ) : communityEchoes.length === 0 ? (
+                  <div className="p-12 text-center rounded-3xl border border-white/5 bg-white/[0.01]">
+                    <Sparkles className="w-6 h-6 text-white/20 mx-auto mb-3" />
+                    <p className="text-xs text-white/40 uppercase tracking-widest font-bold">No community echoes have been shared yet.</p>
+                    <p className="text-[11px] text-white/20 mt-1 font-mono uppercase tracking-wider">Be the first to share your branched destiny with the world!</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {communityEchoes.map((echo) => {
+                      const hasLiked = (echo.likesBy || []).includes(user?.uid);
+                      const stepsCount = (echo.stepsSnapshot || []).length;
+                      const displayGenre = echo.genre || "Mystery Saga";
+                      const dateFormatted = echo.createdAt
+                        ? new Date(echo.createdAt).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })
+                        : "Ancient Date";
+
+                      return (
+                        <div
+                          key={echo.id}
+                          id={`echo-card-${echo.id}`}
+                          onClick={() => {
+                            setSharedEchoSnapshot({ id: echo.id, ...echo });
+                            window.history.pushState(
+                              {},
+                              "",
+                              `/?sharedEcho=${echo.id}`
+                            );
+                          }}
+                          className={`group cursor-pointer relative p-6 rounded-3xl border transition-all duration-500 text-left flex flex-col justify-between min-h-[200px] shadow-lg ${
+                            displayGenre === "romance"
+                              ? "bg-rose-950/10 border-rose-500/5 hover:border-rose-500/20 hover:shadow-rose-950/20"
+                              : displayGenre === "crime"
+                                ? "bg-slate-950/40 border-slate-900 hover:border-slate-800 hover:shadow-slate-950/20"
+                                : "bg-purple-950/10 border-purple-500/5 hover:border-purple-500/20 hover:shadow-purple-950/20"
+                          } bg-[#0A0D14]/80 backdrop-blur-sm hover:-translate-y-1`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <span
+                                className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                  displayGenre === "romance"
+                                    ? "bg-rose-500/20 text-rose-300"
+                                    : displayGenre === "crime"
+                                      ? "bg-sky-500/20 text-sky-400"
+                                      : "bg-purple-500/20 text-purple-400"
+                                }`}
+                              >
+                                {displayGenre === "romance" ? "Rose & Rapture" : displayGenre === "crime" ? "True Crime Noir" : "Veiled Realms"}
+                              </span>
+                              <span className="text-[10px] text-white/30 font-mono">
+                                {stepsCount} {stepsCount === 1 ? "Scene" : "Scenes"}
+                              </span>
+                            </div>
+
+                            <h3 className="text-base font-serif font-medium text-white/95 group-hover:text-white transition-colors tracking-tight line-clamp-1 mb-0.5">
+                              {echo.characterArchetype || "Uncharted Destiny"}
+                            </h3>
+                            <p className="text-[10px] text-white/40 font-mono line-clamp-1 mb-3">
+                              By {echo.creatorName || "Mysterious Scribe"}
+                            </p>
+                            
+                            {echo.customBasis && (
+                              <p className="text-xs text-white/60 font-light italic leading-relaxed line-clamp-2 mb-4">
+                                "{echo.customBasis}"
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5 text-[10px] text-white/30 font-medium font-mono">
+                            <span>{dateFormatted}</span>
+                            <button
+                              id={`like-button-${echo.id}`}
+                              onClick={(e) => handleLikeEcho(echo.id, e)}
+                              className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-all border shrink-0 ${
+                                hasLiked
+                                  ? "bg-rose-500/20 border-rose-500/40 text-rose-400"
+                                  : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white"
+                              }`}
+                            >
+                              <Heart className={`w-3.5 h-3.5 ${hasLiked ? "fill-rose-500 text-rose-400" : ""}`} />
+                              <span>{echo.likesBy?.length || echo.likesCount || 0}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : showParameterSetup && loading ? (
@@ -4089,6 +4927,12 @@ function App() {
                   >
                     The tapestry of your journey
                   </p>
+                  {isDailyPromptActive && (
+                    <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-mono uppercase tracking-widest mx-auto animate-pulse select-none">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Daily Challenge Activated
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-center border-b border-opacity-10 font-mono text-[10px] sm:text-xs uppercase tracking-widest gap-4 sm:gap-8">
@@ -4243,12 +5087,122 @@ function App() {
                             backstory: e.target.value,
                           }))
                         }
-                        rows={3}
-                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none ${
-                          genre === "romance"
-                            ? "border-rose-100 focus:border-rose-300 focus:ring-rose-100 text-rose-900 placeholder:text-rose-200"
-                            : "border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20"
-                        }`}
+                        rows={2}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* Predefined Character Motive */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        Protagonist Motives & Key Driver
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Bring down the Syndicate of Scribes, recover their lost sibling..."
+                        value={storyParameters.characterMotive}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            characterMotive: e.target.value,
+                          }))
+                        }
+                        className={`w-full p-4 rounded-xl border bg-transparent transition-all outline-none focus:ring-2 text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* Predefined Character Traits */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        Defining Traits (Comma Separated)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Cynical, Highly observant, Prone to impulsive risk-taking..."
+                        value={storyParameters.definingTraits}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            definingTraits: e.target.value,
+                          }))
+                        }
+                        className={`w-full p-4 rounded-xl border bg-transparent transition-all outline-none focus:ring-2 text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* NPC Relationship Dynamics */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        NPC Relationship Dynamics & Alliances
+                      </label>
+                      <textarea
+                        placeholder="e.g. Distrusts the head investigator, but has a secret informant alliance with the dealer..."
+                        value={storyParameters.relationshipsDynamics}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            relationshipsDynamics: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* World Geography */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        World Geography & Setting Atmosphere
+                      </label>
+                      <textarea
+                        placeholder="e.g. A dystopian concrete mega-city enveloped in perpetual toxic twilight smog..."
+                        value={storyParameters.worldGeography}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            worldGeography: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* World History */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        World Chronicles & History
+                      </label>
+                      <textarea
+                        placeholder="e.g. An ancient cataclysm sank the old world under oceans, forcing survivors into floating sky domes..."
+                        value={storyParameters.worldHistory}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            worldHistory: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
+                      />
+                    </div>
+
+                    {/* World Social Rules */}
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase font-black tracking-widest opacity-40">
+                        Social structures & Laws
+                      </label>
+                      <textarea
+                        placeholder="e.g. Magic is strictly registered by the ministry. Common citizens hold zero power..."
+                        value={storyParameters.worldSocialStructures}
+                        onChange={(e) =>
+                          setStoryParameters((p) => ({
+                            ...p,
+                            worldSocialStructures: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
                       />
                     </div>
 
@@ -4265,12 +5219,8 @@ function App() {
                             customBasis: e.target.value,
                           }))
                         }
-                        rows={4}
-                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none ${
-                          genre === "romance"
-                            ? "border-rose-100 focus:border-rose-300 focus:ring-rose-100 text-rose-900 placeholder:text-rose-200"
-                            : "border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20"
-                        }`}
+                        rows={3}
+                        className={`w-full p-4 rounded-2xl border bg-transparent transition-all outline-none focus:ring-2 resize-none text-xs border-white/10 focus:border-sky-400 focus:ring-sky-500/20 text-white placeholder:text-white/20`}
                       />
                     </div>
                   </>
@@ -5325,6 +6275,18 @@ function App() {
                       </div>
                     </div>
 
+                    {currentNode && currentNode.isEnding && (
+                      <div className="mt-16 pt-16 border-t border-white/5">
+                        <MonetizationHub
+                          user={user}
+                          activeGenre={genre}
+                          triggerNotification={(msg) => {
+                            console.log("[TBR Story Ending Support]:", msg);
+                          }}
+                        />
+                      </div>
+                    )}
+
                     {/* Branching Narrative System Visual Tree Tracker */}
                     {allSteps.length > 0 && (
                       <BranchingTimeline
@@ -5637,7 +6599,7 @@ function App() {
                 <div className="space-y-4">
                   <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
                     <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest">World Grimoire Settings</h4>
-                    <p className="text-xs text-gray-400 leading-relaxed">Modify backstories or custom basis prompts to alter subsequent AI plot generations.</p>
+                    <p className="text-xs text-gray-400 leading-relaxed">Modify character parameters, relationships, and world blueprints to redirect future AI chapters.</p>
                   </div>
 
                   <div className="space-y-4">
@@ -5652,11 +6614,83 @@ function App() {
                     </div>
 
                     <div className="space-y-1.5 text-left">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Backstory & Motivations</label>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Backstory / Origin Chronicle</label>
                       <textarea
                         rows={3}
                         value={storyParameters.backstory || ""}
                         onChange={(e) => setStoryParameters(prev => ({ ...prev, backstory: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    {/* Character Motives */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Protagonist Motives & Aspirations</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. Seeking revenge for the loss of a partner; discovering forbidden truths..."
+                        value={storyParameters.characterMotive || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, characterMotive: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    {/* Defining Traits */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Defining Personality Traits (Comma Separated)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Cynical, Highly observant, Prone to impulsive risk-taking"
+                        value={storyParameters.definingTraits || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, definingTraits: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white font-semibold"
+                      />
+                    </div>
+
+                    {/* Connection Relationship Dynamics */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">NPC Relationship Dynamics (Alliances/Rivalries)</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. Secret alliance with the informant, deep rivalry and distrust of the head inspector..."
+                        value={storyParameters.relationshipsDynamics || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, relationshipsDynamics: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    {/* World Geography */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">World Geography & Atmosphere</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. A dystopian high-rise concrete sprawl enveloped in a perpetual neon yellow smog..."
+                        value={storyParameters.worldGeography || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, worldGeography: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    {/* World History */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">World History & Historical Pivots</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. Built over the ruins of the Sunken Epoch of 2082. A war 30 years ago left memory blocks erased..."
+                        value={storyParameters.worldHistory || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, worldHistory: e.target.value }))}
+                        className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
+                      />
+                    </div>
+
+                    {/* Social Structures */}
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Social Structures & Social Rules</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. Governed by the Syndicate of Scribes. Citizens are ranked by their narrative contribution..."
+                        value={storyParameters.worldSocialStructures || ""}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, worldSocialStructures: e.target.value }))}
                         className="w-full px-4 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white leading-relaxed"
                       />
                     </div>
@@ -5707,7 +6741,7 @@ function App() {
                     <p className="text-[9px] text-gray-400">This twist will be injected and consumed by the AI model during the next choice generation, then cleared automatically.</p>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-4 pt-2 border-t border-white/5">
                     <div className="space-y-1 text-left">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">Story Tone guideline</label>
                       <select
@@ -5722,6 +6756,65 @@ function App() {
                         <option value="whimsical">Cozy / Whimsical</option>
                         <option value="dramatic">High Drama & Romance</option>
                       </select>
+                    </div>
+
+                    {/* AI Tone / Style Selection */}
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">AI Style Preset Selection</label>
+                      <select
+                        value={storyParameters.styleTonePreset || "intense"}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, styleTonePreset: e.target.value }))}
+                        className="w-full px-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-lg text-white font-bold"
+                      >
+                        <option value="Evocative & Poetic">Evocative & Poetic (Sensory & Rich)</option>
+                        <option value="Factual & Journalistic">Factual & Journalistic (Stark & Objective)</option>
+                        <option value="Humorous & Satirical">Humorous & Satirical (Playful & Sharp)</option>
+                        <option value="Noir hardboiled">Grit & Noir (Biting & Raw)</option>
+                        <option value="Whimsical fantasy">Whimsical & Cozy (Light & Ethereal)</option>
+                        <option value="High Drama">High Romance & Melodrama (Intense Chemistry)</option>
+                      </select>
+                    </div>
+
+                    {/* Vocabulary Complexity Range Slider */}
+                    <div className="space-y-1 text-left bg-slate-900/40 p-3 rounded-xl border border-white/5">
+                      <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">
+                        <span>Vocabulary density</span>
+                        <span className="text-amber-400">Level {storyParameters.vocabularyComplexity || 3} / 5</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="5"
+                        value={storyParameters.vocabularyComplexity || 3}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, vocabularyComplexity: parseInt(e.target.value) }))}
+                        className="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-gray-500 font-mono mt-0.5">
+                        <span>STARK Simple</span>
+                        <span>MODERATE</span>
+                        <span>BAROQUE Flowery</span>
+                      </div>
+                    </div>
+
+                    {/* Sentence Rhythm Cadence Range Slider */}
+                    <div className="space-y-1 text-left bg-slate-900/40 p-3 rounded-xl border border-white/5">
+                      <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-[#A0A2B1]">
+                        <span>Sentence Rhythm & Pace</span>
+                        <span className="text-amber-400">Level {storyParameters.sentenceRhythm || 3} / 5</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="5"
+                        value={storyParameters.sentenceRhythm || 3}
+                        onChange={(e) => setStoryParameters(prev => ({ ...prev, sentenceRhythm: parseInt(e.target.value) }))}
+                        className="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-gray-500 font-mono mt-0.5">
+                        <span>STACCATO Action</span>
+                        <span>BALANCED</span>
+                        <span>PERIODIC Flowing</span>
+                      </div>
                     </div>
 
                     <div className="space-y-1 text-left">
@@ -5882,6 +6975,36 @@ function App() {
                     >
                       <Download className="w-4 h-4 text-emerald-400" /> Export Grimoire File (.md)
                     </button>
+
+                    <button
+                      onClick={handleExportGoogleDoc}
+                      disabled={isExportingGoogleDoc}
+                      className="w-full py-3.5 bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/30 hover:border-indigo-500/60 rounded-xl font-bold text-xs uppercase tracking-widest text-[#ECEEF2] flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      {isExportingGoogleDoc ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                      ) : (
+                        <FileText className="w-4 h-4 text-indigo-400" />
+                      )}
+                      {isExportingGoogleDoc ? "Formatting Book..." : "Export to Google Docs"}
+                    </button>
+
+                    {exportedGoogleDocUrl && (
+                      <div className="p-3.5 bg-indigo-950/20 border border-indigo-500/20 rounded-xl space-y-2 mt-2 text-left animate-fadeIn">
+                        <p className="text-[10px] text-[#A5B4FC] font-semibold uppercase tracking-wider">Bookstore Document Compiled!</p>
+                        <p className="text-[11px] text-gray-300">
+                          A professionally styled, bookstore-ready serif manuscript has been designed and created inside your Google Docs.
+                        </p>
+                        <a
+                          href={exportedGoogleDocUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-[#ECEEF2] rounded text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                        >
+                          Open in Google Docs <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    )}
 
                     <div className="pt-2 border-t border-white/5 space-y-3 text-left">
                       <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Shareable Interactive Path</span>

@@ -38,8 +38,9 @@ service cloud.firestore {
     }
 
     match /shared_echoes/{echoId} {
-      allow get: if true;
+      allow read: if true;
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn();
     }
 
     match /rooms/{roomId} {

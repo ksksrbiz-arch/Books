@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { initializeFirestore, doc, setDoc, getDoc, collection, addDoc, query, orderBy, getDocs, onSnapshot, serverTimestamp, getDocFromServer } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, uploadString, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -11,7 +12,132 @@ export const db = dbId
   ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, dbId)
   : initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 
+export const storage = getStorage(app);
+
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope("https://www.googleapis.com/auth/documents");
+googleProvider.addScope("https://www.googleapis.com/auth/drive.file");
+
+/**
+ * Uploads an image (either a local server path, an external URL, or a base64 string) to Firebase Storage
+ * and returns its public download URL.
+ */
+export async function uploadImageToStorage(
+  sourceUrlOrBase64: string,
+  userId: string,
+  storyId: string,
+  stepId: string
+): Promise<string> {
+  // Use a well-patterned path structure: users/${userId}/stories/${storyId}/steps/${stepId}.png
+  const storagePath = `users/${userId}/stories/${storyId}/steps/${stepId}.png`;
+  const storageRef = ref(storage, storagePath);
+
+  // 1. If it's a data URL / base64 string
+  if (sourceUrlOrBase64.startsWith('data:image/')) {
+    const uploadResult = await uploadString(storageRef, sourceUrlOrBase64, 'data_url');
+    return await getDownloadURL(uploadResult.ref);
+  }
+
+  // 2. Otherwise download and upload the raw binary blob
+  try {
+    const response = await fetch(sourceUrlOrBase64);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image binary, status code ${response.status}`);
+    }
+    const blob = await response.blob();
+    const uploadResult = await uploadBytes(storageRef, blob, {
+      contentType: blob.type || 'image/png'
+    });
+    return await getDownloadURL(uploadResult.ref);
+  } catch (err) {
+    console.warn("Direct binary blob upload failed, falling back to writing source URL directly:", err);
+    // Return original url if fetching / uploading failed
+    return sourceUrlOrBase64;
+  }
+}
+
+/**
+ * Deletes a specific step's image from Storage.
+ */
+export async function deleteStepImageFromStorage(
+  userId: string,
+  storyId: string,
+  stepId: string
+): Promise<void> {
+  if (!userId || !storyId || !stepId) return;
+  try {
+    const storagePath = `users/${userId}/stories/${storyId}/steps/${stepId}.png`;
+    const storageRef = ref(storage, storagePath);
+    await deleteObject(storageRef);
+    console.log(`[Storage Cleanup] Successfully deleted step image: ${storagePath}`);
+  } catch (err) {
+    // If it doesn't exist or is already deleted, ignore
+    console.warn(`[Storage Cleanup] Failed to delete specific step image or image did not exist:`, err);
+  }
+}
+
+/**
+ * Periodically or on-demand deletes orphaned story images from Storage for a given story.
+ * Lists all files inside users/${userId}/stories/${storyId}/steps and deletes any png files
+ * whose stepId is NOT in the keepStepIds list.
+ */
+export async function cleanupOrphanedStorageImages(
+  userId: string,
+  storyId: string,
+  keepStepIds: string[]
+): Promise<void> {
+  if (!userId || !storyId) return;
+  try {
+    const parentFolderRef = ref(storage, `users/${userId}/stories/${storyId}/steps`);
+    const listResult = await listAll(parentFolderRef);
+    
+    // Create a Set of allowed filenames
+    const allowedFilenames = new Set(keepStepIds.map(id => `${id}.png`));
+    
+    // Delete any files in Storage that are not in the allowed set
+    const deletePromises = listResult.items.map(async (itemRef) => {
+      const filename = itemRef.name;
+      if (!allowedFilenames.has(filename)) {
+        console.log(`[Storage Cleanup] Deleting orphaned storage image: ${itemRef.fullPath}`);
+        try {
+          await deleteObject(itemRef);
+        } catch (delErr) {
+          console.warn(`[Storage Cleanup] Failed to delete orphaned image: ${itemRef.fullPath}:`, delErr);
+        }
+      }
+    });
+    
+    await Promise.all(deletePromises);
+    console.log(`[Storage Cleanup] Image cleanup completed for story ${storyId}. Keep: ${keepStepIds.length} steps.`);
+  } catch (err) {
+    console.warn(`[Storage Cleanup] Error listing or deleting objects for story ${storyId}:`, err);
+  }
+}
+
+/**
+ * Deletes all images belonging to a user's story inside Firebase Storage.
+ */
+export async function cleanupAllStoryImagesFromStorage(
+  userId: string,
+  storyId: string
+): Promise<void> {
+  if (!userId || !storyId) return;
+  try {
+    const parentFolderRef = ref(storage, `users/${userId}/stories/${storyId}/steps`);
+    const listResult = await listAll(parentFolderRef);
+    const deletePromises = listResult.items.map(async (itemRef) => {
+      try {
+        await deleteObject(itemRef);
+        console.log(`[Storage Cleanup] Deleted story image: ${itemRef.fullPath}`);
+      } catch (delErr) {
+        console.warn(`[Storage Cleanup] Failed to delete story image ${itemRef.fullPath}:`, delErr);
+      }
+    });
+    await Promise.all(deletePromises);
+  } catch (err) {
+    console.warn(`[Storage Cleanup] Error cleaning up deleted story images:`, err);
+  }
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -92,6 +218,11 @@ async function checkChaosOutage(): Promise<boolean> {
 }
 
 export async function setDocSafe(docRef: any, data: any, options?: any): Promise<boolean> {
+  const startTime = performance.now();
+  window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+    detail: { status: "syncing", message: "Uploading modifications to Google Cloud..." }
+  }));
+
   try {
     // If simulated DB outage is active, fail immediately to test the failover gracefully
     if (await checkChaosOutage()) {
@@ -103,6 +234,8 @@ export async function setDocSafe(docRef: any, data: any, options?: any): Promise
       await setDoc(docRef, data);
     }
     
+    const latencyVal = Math.round(performance.now() - startTime);
+
     // Clear individual doc cache with freshest data
     const path = docRef.path;
     localStorage.setItem(`local_cache_doc:${path}`, JSON.stringify(data));
@@ -113,11 +246,12 @@ export async function setDocSafe(docRef: any, data: any, options?: any): Promise
       await flushOfflineQueueSync();
     } else {
       window.dispatchEvent(new CustomEvent("firestore_sync_status", {
-        detail: { status: "online", message: "" }
+        detail: { status: "online_synced", message: "Successfully synced with Cloud Cosmos.", latency: latencyVal }
       }));
     }
     return true;
-  } catch (err) {
+  } catch (err: any) {
+    const latencyVal = Math.round(performance.now() - startTime);
     console.warn("setDoc failed, saving to local offline cache:", err);
     const path = docRef.path;
     const queue: OfflineQueueItem[] = JSON.parse(localStorage.getItem("offline_echoes_sync") || "[]");
@@ -138,18 +272,24 @@ export async function setDocSafe(docRef: any, data: any, options?: any): Promise
     
     // Dispatch system notification
     window.dispatchEvent(new CustomEvent("firestore_sync_status", {
-      detail: { status: "offline_active", message: "Cloud sync offline. Story protected locally." }
+      detail: { status: "offline_active", message: "Cloud sync offline. Progress saved safely in local sandbox.", latency: latencyVal }
     }));
     return false;
   }
 }
 
 export async function addDocSafe(colRef: any, data: any): Promise<any> {
+  const startTime = performance.now();
+  window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+    detail: { status: "syncing", message: "Uploading modifications to Google Cloud..." }
+  }));
+
   try {
     if (await checkChaosOutage()) {
       throw new Error("Simulated Firestore Outage (Chaos Mode Induced)");
     }
     const docRefResolved = await addDoc(colRef, data);
+    const latencyVal = Math.round(performance.now() - startTime);
 
     // Warm up the collection query list cache index optimistically
     const path = colRef.path;
@@ -167,11 +307,12 @@ export async function addDocSafe(colRef: any, data: any): Promise<any> {
       await flushOfflineQueueSync();
     } else {
       window.dispatchEvent(new CustomEvent("firestore_sync_status", {
-        detail: { status: "online", message: "" }
+        detail: { status: "online_synced", message: "Successfully synced with Cloud Cosmos.", latency: latencyVal }
       }));
     }
     return docRefResolved;
-  } catch (err) {
+  } catch (err: any) {
+    const latencyVal = Math.round(performance.now() - startTime);
     console.warn("addDoc failed, saving to local offline cache:", err);
     const path = colRef.path;
     const mockId = "mock-doc-" + crypto.randomUUID().substring(0, 8);
@@ -193,7 +334,7 @@ export async function addDocSafe(colRef: any, data: any): Promise<any> {
     localStorage.setItem(listCacheKey, JSON.stringify(cachedList));
 
     window.dispatchEvent(new CustomEvent("firestore_sync_status", {
-      detail: { status: "offline_active", message: "Progress saved in sandbox (Simulated Offline Fallback Mode)." }
+      detail: { status: "offline_active", message: "Progress saved in sandbox (Simulated Offline Fallback Mode).", latency: latencyVal }
     }));
     
     return { id: mockId, path: `${path}/${mockId}` };
@@ -206,6 +347,11 @@ export async function flushOfflineQueueSync(): Promise<{ succeeded: number; fail
   if (queue.length === 0) return { succeeded: 0, failed: 0 };
 
   console.log(`[Offline Sync Engine] Attempting to flush ${queue.length} pending writes to Firestore...`);
+  window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+    detail: { status: "syncing", message: `Synchronizing outstanding ${queue.length} edits...` }
+  }));
+
+  const startTime = performance.now();
   let succeeded = 0;
   let failed = 0;
   const remainingQueue: OfflineQueueItem[] = [];
@@ -233,9 +379,15 @@ export async function flushOfflineQueueSync(): Promise<{ succeeded: number; fail
 
   localStorage.setItem("offline_echoes_sync", JSON.stringify(remainingQueue));
 
+  const latencyVal = Math.round(performance.now() - startTime);
+
   if (succeeded > 0 && remainingQueue.length === 0) {
     window.dispatchEvent(new CustomEvent("firestore_sync_status", {
-      detail: { status: "online_synced", message: `All outstanding data (${succeeded} records) synced to Google Cloud Cosmos.` }
+      detail: { status: "online_synced", message: `All outstanding data (${succeeded} records) synced to Google Cloud Cosmos.`, latency: latencyVal }
+    }));
+  } else if (remainingQueue.length > 0) {
+    window.dispatchEvent(new CustomEvent("firestore_sync_status", {
+      detail: { status: "offline_active", message: "Some changes queued. Direct connection latency computed.", latency: latencyVal }
     }));
   }
 
