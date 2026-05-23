@@ -7,6 +7,8 @@ import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import compression from "compression";
+import * as admin from "firebase-admin";
+import Stripe from "stripe";
 
 dotenv.config();
 
@@ -281,6 +283,213 @@ const generatedImagesDir = path.join(process.cwd(), "generated-images");
 if (!fs.existsSync(generatedImagesDir)) {
   fs.mkdirSync(generatedImagesDir, { recursive: true });
 }
+
+// Lazy Firebase Admin SDK and Stripe initialization setup
+let adminAppInitialized = false;
+let globalAdminDb: admin.firestore.Firestore | null = null;
+let globalAdminStorage: admin.storage.Storage | null = null;
+let globalStorageBucketName = "gen-lang-client-0881373762.firebasestorage.app";
+
+function initFirebaseAdmin() {
+  if (adminAppInitialized) return;
+  try {
+    console.log("[Firebase Admin] Initializing Admin components...");
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    let projectId = "gen-lang-client-0881373762";
+    let databaseId = "ai-studio-590eef94-28a6-4c7a-a01a-cb805945fa19";
+    
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        if (config.projectId) projectId = config.projectId;
+        if (config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
+        if (config.storageBucket) globalStorageBucketName = config.storageBucket;
+        console.log("[Firebase Admin] Loaded configurations. Project:", projectId, "DB:", databaseId, "Bucket:", globalStorageBucketName);
+      } catch (ex: any) {
+        console.error("[Firebase Admin] Config file parsing failed:", ex.message);
+      }
+    }
+
+    admin.initializeApp({
+      projectId: projectId,
+    });
+    
+    admin.firestore().settings({
+      databaseId: databaseId,
+    });
+
+    globalAdminDb = admin.firestore();
+    globalAdminStorage = admin.storage();
+    adminAppInitialized = true;
+    console.log("[Firebase Admin] Lazy Admin initialized successfully.");
+  } catch (err: any) {
+    console.error("[Firebase Admin] Error during initial setup:", err.message);
+  }
+}
+
+function getFirebaseAdminDb(): admin.firestore.Firestore {
+  initFirebaseAdmin();
+  if (!globalAdminDb) {
+    throw new Error("Firestore Admin could not be initialized");
+  }
+  return globalAdminDb;
+}
+
+function getFirebaseStorageBucket() {
+  initFirebaseAdmin();
+  if (!globalAdminStorage) {
+    throw new Error("Firebase Storage Admin could not be initialized");
+  }
+  return globalAdminStorage.bucket(globalStorageBucketName);
+}
+
+function backupImageToFirebaseStorage(hash: string, buffer: Buffer) {
+  try {
+    const bucket = getFirebaseStorageBucket();
+    const gcsFile = bucket.file(`generated-images/${hash}.png`);
+    gcsFile.save(buffer, {
+      metadata: { contentType: "image/png" },
+      resumable: false
+    }).then(() => {
+      console.log(`[Firebase Storage Backup] Image ${hash}.png saved persistently.`);
+    }).catch((uploadErr) => {
+      console.error(`[Firebase Storage Backup Upload fail] Image ${hash}.png:`, uploadErr.message);
+    });
+  } catch (ex: any) {
+    console.error("[Firebase Storage Upload Exception]:", ex.message);
+  }
+}
+
+let stripeClient: Stripe | null = null;
+function getStripe(): Stripe | null {
+  if (stripeClient) return stripeClient;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    console.warn("[Stripe SDK] STRIPE_SECRET_KEY is missing. Real Checkout processing is disabled.");
+    return null;
+  }
+  stripeClient = new Stripe(key, { apiVersion: "2023-10-16" as any });
+  return stripeClient;
+}
+
+// Raw body parser route specifically for Stripe webhook BEFORE general JSON parsers
+app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  
+  let event;
+  const stripe = getStripe();
+  if (!stripe) {
+    console.error("[Stripe Webhook Error] Stripe is not initialized locally.");
+    return res.status(500).send("Stripe not configured");
+  }
+  
+  if (webhookSecret && sig) {
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    } catch (err: any) {
+      console.warn(`[Webhook Signature Warning]: ${err.message}. Processing fallback metadata parser.`);
+      try {
+        event = JSON.parse(req.body.toString());
+      } catch (parseErr: any) {
+        return res.status(400).send(`Signature failed and Parse failed: ${parseErr.message}`);
+      }
+    }
+  } else {
+    try {
+      event = JSON.parse(req.body.toString());
+    } catch (err: any) {
+      return res.status(400).send(`Webhook Body Parse Error: ${err.message}`);
+    }
+  }
+  
+  console.log(`[Stripe Webhook Event]: Received ${event.type}`);
+  
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const userId = session.metadata?.userId;
+    const creditsAmount = parseInt(session.metadata?.creditsAmount || "0", 10);
+    
+    console.log(`[Stripe Webhook Success]: processing credits placement: User: ${userId}, Amount: ${creditsAmount}`);
+    
+    if (userId && creditsAmount > 0) {
+      try {
+        const adminDb = getFirebaseAdminDb();
+        const userDocRef = adminDb.collection("users").doc(userId);
+        await adminDb.runTransaction(async (transaction) => {
+          const sfDoc = await transaction.get(userDocRef);
+          const currentCredits = sfDoc.exists ? (sfDoc.data()?.credits !== undefined ? sfDoc.data().credits : 5) : 5;
+          const newCredits = currentCredits + creditsAmount;
+          if (sfDoc.exists) {
+            transaction.update(userDocRef, { credits: newCredits });
+          } else {
+            transaction.set(userDocRef, {
+              uid: userId,
+              credits: newCredits,
+              email: session.metadata?.buyerEmail || "",
+              createdAt: new Date().toISOString()
+            });
+          }
+          console.log(`[Stripe Webhook Fulfillment Success] Fulfilling ${creditsAmount} credits to User ${userId}. New Total: ${newCredits}`);
+        });
+      } catch (dbErr: any) {
+        console.error("[Stripe Webhook FireStore Update Error]:", dbErr.message);
+      }
+    }
+  }
+  
+  res.json({ received: true });
+});
+
+// Create checkout session API Endpoint
+app.post("/api/create-checkout-session", express.json(), async (req, res) => {
+  try {
+    const { userId, email, creditsAmount, priceInCents } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId parameter." });
+    }
+    
+    const amt = parseInt(creditsAmount || "5", 10);
+    const price = parseInt(priceInCents || "500", 10);
+    
+    const stripe = getStripe();
+    if (!stripe) {
+      return res.status(500).json({ error: "Stripe service is not configured. Declare STRIPE_SECRET_KEY first." });
+    }
+    
+    const hostUrl = req.headers.referer || `${req.protocol}://${req.get("host")}`;
+    console.log(`[Stripe Checkout] Creating checkout session. User: ${userId}, Amount: ${amt}, Reference Host: ${hostUrl}`);
+    
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: `${amt} Storyteller Grimoire Credits Pack`,
+            description: `Adds ${amt} premium interactive choices to weave subsequent chronicle pathways at TBR Bookstore.`,
+          },
+          unit_amount: price,
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      success_url: `${hostUrl.split("?")[0]}?paymentStatus=success`,
+      cancel_url: `${hostUrl.split("?")[0]}?paymentStatus=cancelled`,
+      metadata: {
+        userId: userId,
+        creditsAmount: String(amt),
+        buyerEmail: email || ""
+      }
+    });
+    
+    res.json({ id: session.id, url: session.url });
+  } catch (err: any) {
+    console.error("[Stripe Session Error]:", err.message);
+    res.status(500).json({ error: "Failed to establish Stripe payment context.", explanation: err.message });
+  }
+});
 
 app.use(compression());
 app.use(express.json({ limit: "15mb" }));
@@ -830,6 +1039,39 @@ app.get("/api/story/tts", rateLimitingMiddleware, async (req, res) => {
 
 // API routes
 app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : "";
+  if (userId) {
+    try {
+      const adminDb = getFirebaseAdminDb();
+      const userDocRef = adminDb.collection("users").doc(userId);
+      const userSnap = await userDocRef.get();
+      
+      let credits = 5;
+      if (userSnap.exists) {
+        const uVal = userSnap.data();
+        if (uVal && uVal.credits !== undefined) {
+          credits = uVal.credits;
+        }
+      } else {
+        await userDocRef.set({
+          uid: userId,
+          email: typeof req.body?.email === 'string' ? req.body.email.trim() : "",
+          credits: 5,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      if (credits <= 0) {
+        return res.status(402).json({
+          error: "Payment Required",
+          message: "You have used up all your storyteller grimoire credits. Please purchase a credits pack from the TBR bookstore to weave subsequent timelines."
+        });
+      }
+    } catch (err: any) {
+      console.error("[Credits check start exception]:", err.message);
+    }
+  }
+
   const genre = typeof req.body?.genre === 'string' ? req.body.genre.trim() : "mystery";
   const storyLength = typeof req.body?.storyLength === 'string' ? req.body.storyLength.trim() : "medium";
   const characterArchetype = typeof req.body?.characterArchetype === 'string' ? req.body.characterArchetype.trim() : "unknown";
@@ -974,6 +1216,39 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
 });
 
 app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : "";
+  if (userId) {
+    try {
+      const adminDb = getFirebaseAdminDb();
+      const userDocRef = adminDb.collection("users").doc(userId);
+      const userSnap = await userDocRef.get();
+      
+      let credits = 5;
+      if (userSnap.exists) {
+        const uVal = userSnap.data();
+        if (uVal && uVal.credits !== undefined) {
+          credits = uVal.credits;
+        }
+      } else {
+        await userDocRef.set({
+          uid: userId,
+          email: typeof req.body?.email === 'string' ? req.body.email.trim() : "",
+          credits: 5,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      if (credits <= 0) {
+        return res.status(402).json({
+          error: "Payment Required",
+          message: "You have used up all your storyteller grimoire credits. Please purchase a credits pack from the TBR bookstore to weave subsequent timelines."
+        });
+      }
+    } catch (err: any) {
+      console.error("[Credits check continue exception]:", err.message);
+    }
+  }
+
   const history = Array.isArray(req.body?.history) ? req.body.history : [];
   const choice = req.body?.choice && typeof req.body.choice === 'object' ? req.body.choice : { text: "Investigate further", nextContext: "investigate_noise" };
   const genre = typeof req.body?.genre === 'string' ? req.body.genre.trim() : "mystery";
@@ -1168,6 +1443,26 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
 
     const data = JSON.parse(response.text!);
     apiCache.set(cacheKey, data);
+
+    // Deduct 1 credit for successful continue step
+    if (userId) {
+      try {
+        const adminDb = getFirebaseAdminDb();
+        const userDocRef = adminDb.collection("users").doc(userId);
+        await adminDb.runTransaction(async (transaction) => {
+          const sfDoc = await transaction.get(userDocRef);
+          if (sfDoc.exists) {
+            const currentCredits = sfDoc.data()?.credits !== undefined ? sfDoc.data().credits : 5;
+            const newCredits = Math.max(0, currentCredits - 1);
+            transaction.update(userDocRef, { credits: newCredits });
+            console.log(`[Credits System] Deducted 1 credit for user ${userId}. New total: ${newCredits}`);
+          }
+        });
+      } catch (err: any) {
+        console.error("[Credits continue deduction transaction exception]:", err.message);
+      }
+    }
+
     res.json(data);
   } catch (error: any) {
     console.error("Error continuing story (falling back procedurally):", getCleanErrorMessage(error));
@@ -1180,6 +1475,26 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
         choiceTaken: choice.text,
         isEnding: isFinalChoice
       });
+
+      // Deduct 1 credit for fallback continue step
+      if (userId) {
+        try {
+          const adminDb = getFirebaseAdminDb();
+          const userDocRef = adminDb.collection("users").doc(userId);
+          await adminDb.runTransaction(async (transaction) => {
+            const sfDoc = await transaction.get(userDocRef);
+            if (sfDoc.exists) {
+              const currentCredits = sfDoc.data()?.credits !== undefined ? sfDoc.data().credits : 5;
+              const newCredits = Math.max(0, currentCredits - 1);
+              transaction.update(userDocRef, { credits: newCredits });
+              console.log(`[Credits System] Deducted 1 fallback credit for user ${userId}. New total: ${newCredits}`);
+            }
+          });
+        } catch (err: any) {
+          console.error("[Credits continue fallback deduction exception]:", err.message);
+        }
+      }
+
       res.json(fallbackData);
     } catch (fallbackErr: any) {
       res.status(500).json({ error: error.message, fallbackError: fallbackErr.message });
@@ -1279,6 +1594,23 @@ app.get("/api/story/image-serve", async (req, res) => {
     return fs.createReadStream(filePath).pipe(res);
   }
 
+  // 1.5 Try to fetch backup from persistent Firebase Storage
+  try {
+    const bucket = getFirebaseStorageBucket();
+    const gcsFile = bucket.file(`generated-images/${hash}.png`);
+    const [exists] = await gcsFile.exists();
+    if (exists) {
+      console.log(`[Firebase Storage Retrieve] Cache hit for ${hash}. Downloading persistent backup...`);
+      const [buffer] = await gcsFile.download();
+      fs.writeFileSync(filePath, buffer);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      return res.end(buffer);
+    }
+  } catch (storageErr: any) {
+    console.warn("[Firebase Storage Retrieve warning]:", storageErr.message);
+  }
+
   // 2. Self-healing dynamic regeneration if local file is missing/containers recycled
   if (!prompt) {
     // If we don't have prompt, show a quick elegant fallback placeholder
@@ -1341,10 +1673,12 @@ app.get("/api/story/image-serve", async (req, res) => {
     }
 
     if (base64Data) {
-      fs.writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+      const imgBuffer = Buffer.from(base64Data, "base64");
+      fs.writeFileSync(filePath, imgBuffer);
+      backupImageToFirebaseStorage(hash, imgBuffer);
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      return res.end(Buffer.from(base64Data, "base64"));
+      return res.end(imgBuffer);
     }
 
     throw new Error("No image data returned from AI models during regeneration");
@@ -1373,8 +1707,10 @@ app.post("/api/story/cache-base64", async (req, res) => {
     const hash = crypto.createHash("md5").update(pureBase64).digest("hex");
     const filePath = path.join(generatedImagesDir, `${hash}.png`);
 
-    fs.writeFileSync(filePath, Buffer.from(pureBase64, "base64"));
-    console.log(`Cached client-provided base64 image to server disk. Hash: ${hash}`);
+    const imgBuffer = Buffer.from(pureBase64, "base64");
+    fs.writeFileSync(filePath, imgBuffer);
+    backupImageToFirebaseStorage(hash, imgBuffer);
+    console.log(`Cached client-provided base64 image to server disk and Firebase Storage. Hash: ${hash}`);
 
     const imageUrl = `/api/story/image-serve?hash=${hash}&mood=${encodeURIComponent(mood || "")}&genre=${encodeURIComponent(genre || "")}&prompt=${encodeURIComponent(prompt || "")}`;
     return res.json({ imageUrl });
@@ -1430,7 +1766,9 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
           console.log("Extracted valid base64 image data. Writing to local container disk cache...");
           const base64Data = part.inlineData.data;
           const filePath = path.join(generatedImagesDir, `${hash}.png`);
-          fs.writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+          const imgBuffer = Buffer.from(base64Data, "base64");
+          fs.writeFileSync(filePath, imgBuffer);
+          backupImageToFirebaseStorage(hash, imgBuffer);
 
           const data = { imageUrl: `/api/story/image-serve?hash=${hash}&mood=${encodeURIComponent(mood || "")}&genre=${encodeURIComponent(genre || "")}&prompt=${encodeURIComponent(prompt || "")}` };
           apiCache.set(cacheKey, data);
@@ -1477,7 +1815,9 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
             console.log("Secondary visual stream successfully processed request. Writing to local cache...");
             const base64Data = part.inlineData.data;
             const filePath = path.join(generatedImagesDir, `${hash}.png`);
-            fs.writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+            const imgBuffer = Buffer.from(base64Data, "base64");
+            fs.writeFileSync(filePath, imgBuffer);
+            backupImageToFirebaseStorage(hash, imgBuffer);
 
             const data = { imageUrl: `/api/story/image-serve?hash=${hash}&mood=${encodeURIComponent(mood || "")}&genre=${encodeURIComponent(genre || "")}&prompt=${encodeURIComponent(prompt || "")}` };
             apiCache.set(cacheKey, data);
@@ -1527,7 +1867,9 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
               console.log("Visual safety-fallback successfully recovered image. Writing to local cache...");
               const base64Data = part.inlineData.data;
               const filePath = path.join(generatedImagesDir, `${fallbackHash}.png`);
-              fs.writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+              const imgBuffer = Buffer.from(base64Data, "base64");
+              fs.writeFileSync(filePath, imgBuffer);
+              backupImageToFirebaseStorage(fallbackHash, imgBuffer);
 
               const data = { imageUrl: `/api/story/image-serve?hash=${fallbackHash}&mood=${encodeURIComponent(mood || "")}&genre=${encodeURIComponent(genre || "")}&prompt=${encodeURIComponent(fallbackPrompt)}` };
               apiCache.set(cacheKey, data);

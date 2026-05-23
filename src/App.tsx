@@ -49,6 +49,9 @@ import {
   Trash,
   GitBranch,
   FileText,
+  Search,
+  ArrowDownAZ,
+  Coins,
 } from "lucide-react";
 import {
   auth,
@@ -63,6 +66,8 @@ import {
   onAuthStateChanged,
   User,
   GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
 } from "firebase/auth";
 
 const AtmosphericEffects = lazy(() =>
@@ -274,6 +279,11 @@ const PREMADE_PREMISES: Record<
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [userCredits, setUserCredits] = useState<number>(5);
+  const [emailMode, setEmailMode] = useState<"login" | "signup">("login");
+  const [emailVal, setEmailVal] = useState("");
+  const [passwordVal, setPasswordVal] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [genre, setGenre] = useState<Genre>(null);
   const [storyParameters, setStoryParameters] = useState<{
     length: StoryLength;
@@ -336,10 +346,14 @@ function App() {
   const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showMonetization, setShowMonetization] = useState(false);
   const [showKeepNotes, setShowKeepNotes] = useState(false);
   const [showCodex, setShowCodex] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [userStories, setUserStories] = useState<any[]>([]);
+  const [librarySortBy, setLibrarySortBy] = useState<"lastPlayed" | "genre" | "alphabetical">("lastPlayed");
+  const [librarySortOrder, setLibrarySortOrder] = useState<"asc" | "desc">("desc");
+  const [librarySearchQuery, setLibrarySearchQuery] = useState("");
   const [syncStatus, setSyncStatus] = useState<{ status: "online" | "offline_active" | "online_synced" | "syncing" | "error"; message: string; latency?: number }>({ status: "online", message: "" });
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
@@ -1104,10 +1118,18 @@ function App() {
   // Auth Listener
   useEffect(() => {
     console.log("Auth listener mounting");
+    let unsubscribeUser: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       console.log("Auth state changed:", u ? "user logged in" : "no user");
       setUser(u);
       setAuthLoading(false);
+
+      if (unsubscribeUser) {
+        unsubscribeUser();
+        unsubscribeUser = null;
+      }
+
       if (u) {
         // Sync user profile safely
         const userRef = doc(db, "users", u.uid);
@@ -1118,12 +1140,17 @@ function App() {
               email: u.email,
               displayName: u.displayName,
               photoURL: u.photoURL,
+              credits: 5, // Initialize with 5 free credits
               createdAt: serverTimestamp(),
             }).catch((err) => {
               console.error("Profile sync error:", err);
               handleFirestoreError(err, OperationType.CREATE, `users/${u.uid}`);
             });
           } else {
+            const data = docSnap.data();
+            if (data && data.credits === undefined) {
+              setDoc(userRef, { credits: 5 }, { merge: true });
+            }
             // Standard update without touching createdAt
             setDoc(
               userRef,
@@ -1139,14 +1166,31 @@ function App() {
           }
         });
 
+        // Set up real-time listener for user credits and details
+        unsubscribeUser = onSnapshot(doc(db, "users", u.uid), (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            if (data && typeof data.credits === "number") {
+              setUserCredits(data.credits);
+            }
+          }
+        }, (error) => {
+          handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
+        });
+
         // Try to resume active story
         resumeActiveStory(u.uid);
         fetchUserStories(u.uid);
       } else {
         resetGame();
+        setUserCredits(5);
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribe();
+      if (unsubscribeUser) unsubscribeUser();
+    };
   }, []);
 
   const loadStory = async (storyId: string) => {
@@ -1506,6 +1550,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: user.uid,
           genre: g,
           storyLength: storyParameters.length,
           characterArchetype: storyParameters.archetype,
@@ -1526,7 +1571,14 @@ function App() {
           sentenceRhythm: storyParameters.sentenceRhythm
         }),
       });
-      if (!response.ok) throw new Error("Failed to start story");
+      if (!response.ok) {
+        if (response.status === 402) {
+          setError("Payment Required: You have run out of storytelling credits. Please purchase more credits in the TBR support hub to start a new chronicle.");
+          setShowMonetization(true);
+          throw new Error("Payment Required: Out of credits");
+        }
+        throw new Error("Failed to start story");
+      }
       const data = await response.json();
 
       // Clear/Initialize echo timeline with initial cinematic ripples
@@ -1713,6 +1765,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: user.uid,
           history: newHistory,
           choice,
           genre: g,
@@ -1742,7 +1795,14 @@ function App() {
           sentenceRhythm: storyParameters.sentenceRhythm
         }),
       });
-      if (!response.ok) throw new Error("Failed to continue story");
+      if (!response.ok) {
+        if (response.status === 402) {
+          setError("Payment Required: You have run out of storytelling credits. Please purchase more credits from the Support / Story Packs tab to continue this saga.");
+          setShowMonetization(true);
+          throw new Error("Payment Required: Out of credits");
+        }
+        throw new Error("Failed to continue story");
+      }
       return await response.json();
     })();
 
@@ -3328,155 +3388,357 @@ function App() {
       )}
 
       {/* Library Modal */}
-      {showLibrary && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/60">
-          <div
-            className={`w-full max-w-4xl h-[80vh] flex flex-col p-8 rounded-[2.5rem] border shadow-2xl ${
-              genre === "romance"
-                ? "bg-white border-rose-100 text-rose-900"
-                : "bg-zinc-950 border-white/10 text-white"
-            }`}
-          >
-            <div className="flex justify-between items-center mb-8 px-4">
-              <div className="space-y-1">
-                <h3 className="text-3xl font-black uppercase tracking-tight">
-                  Your Fates
-                </h3>
-                <p className="text-[10px] uppercase font-black tracking-[0.2em] opacity-40">
-                  Previous and active narratives
-                </p>
-              </div>
-              <button
-                onClick={() => setShowLibrary(false)}
-                className="p-2 hover:bg-white/5 rounded-full transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
+      {showLibrary && (() => {
+        // Safe stories timestamp reader
+        const getStoryTime = (story: any) => {
+          if (!story) return 0;
+          if (story.updatedAt?.seconds !== undefined) {
+            return story.updatedAt.seconds * 1000;
+          }
+          if (story.updatedAt instanceof Date) {
+            return story.updatedAt.getTime();
+          }
+          if (typeof story.updatedAt === "string") {
+            return new Date(story.updatedAt).getTime();
+          }
+          if (story.createdAt?.seconds !== undefined) {
+            return story.createdAt.seconds * 1000;
+          }
+          if (typeof story.timestamp === "number") {
+            return story.timestamp;
+          }
+          return 0;
+        };
 
-            <div className="flex-1 overflow-y-auto space-y-4 p-4 custom-scrollbar">
-              {userStories.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
-                  <LibraryIcon className="w-12 h-12" />
-                  <p className="text-xs font-black uppercase tracking-[0.3em]">
-                    No stories woven yet
+        let sortedAndFilteredStories = [...userStories];
+        if (librarySearchQuery.trim() !== "") {
+          const q = librarySearchQuery.toLowerCase();
+          sortedAndFilteredStories = sortedAndFilteredStories.filter(story => {
+            const archetype = (story.characterArchetype || "").toLowerCase();
+            const basis = (story.customBasis || story.backstory || "").toLowerCase();
+            const genreName = (story.genre || "").toLowerCase();
+            return archetype.includes(q) || basis.includes(q) || genreName.includes(q);
+          });
+        }
+
+        sortedAndFilteredStories.sort((a, b) => {
+          let multiplier = librarySortOrder === "asc" ? 1 : -1;
+          
+          if (librarySortBy === "lastPlayed") {
+            const timeA = getStoryTime(a);
+            const timeB = getStoryTime(b);
+            return (timeA - timeB) * multiplier;
+          }
+          
+          if (librarySortBy === "genre") {
+            const genreA = (a.genre || "").toLowerCase();
+            const genreB = (b.genre || "").toLowerCase();
+            if (genreA !== genreB) {
+              return genreA.localeCompare(genreB) * multiplier;
+            }
+            // Secondary fallback sorting: latest first
+            return (getStoryTime(b) - getStoryTime(a));
+          }
+          
+          if (librarySortBy === "alphabetical") {
+            const titleA = (a.characterArchetype || "Untitled Narrative").toLowerCase();
+            const titleB = (b.characterArchetype || "Untitled Narrative").toLowerCase();
+            return titleA.localeCompare(titleB) * multiplier;
+          }
+          
+          return 0;
+        });
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/60">
+            <div
+              className={`w-full max-w-4xl h-[80vh] flex flex-col p-8 rounded-[2.5rem] border shadow-2xl ${
+                genre === "romance"
+                  ? "bg-white border-rose-100 text-rose-900"
+                  : "bg-zinc-950 border-white/10 text-white"
+              }`}
+            >
+              <div className="flex justify-between items-center mb-6 px-4">
+                <div className="space-y-1">
+                  <h3 className="text-3xl font-black uppercase tracking-tight">
+                    Your Fates
+                  </h3>
+                  <p className="text-[10px] uppercase font-black tracking-[0.2em] opacity-40">
+                    Previous and active narratives
                   </p>
                 </div>
-              ) : (
-                userStories.map((story) => (
-                  <div 
-                    key={story.id} 
-                    className="relative group w-full"
-                    onMouseEnter={() => setHoveredStoryId(story.id)}
-                    onMouseLeave={() => setHoveredStoryId(null)}
-                  >
+                <button
+                  onClick={() => setShowLibrary(false)}
+                  className={`p-2 rounded-full transition-colors ${genre === "romance" ? "hover:bg-rose-50" : "hover:bg-white/5"}`}
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Sorting and Filtering HUD Controls */}
+              {userStories.length > 0 && (
+                <div
+                  className={`flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 mb-6 px-4 py-3 rounded-2xl border ${
+                    genre === "romance"
+                      ? "bg-rose-50/50 border-rose-100"
+                      : "bg-white/[0.02] border-white/5"
+                  }`}
+                >
+                  {/* Search Bar Input */}
+                  <div className="relative flex-1 max-w-md">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none opacity-40">
+                      <Search className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Search by archetype, genre, or keyword..."
+                      value={librarySearchQuery}
+                      onChange={(e) => setLibrarySearchQuery(e.target.value)}
+                      className={`w-full pl-9 pr-4 py-2 text-xs rounded-xl transition-all outline-none border ${
+                        genre === "romance"
+                          ? "bg-white border-rose-200 focus:border-rose-400 text-rose-900"
+                          : "bg-white/5 border-white/10 focus:border-white/20 text-white"
+                      }`}
+                    />
+                    {librarySearchQuery && (
+                      <button
+                        onClick={() => setLibrarySearchQuery("")}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs opacity-50 hover:opacity-100"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Sort Option Control Buttons */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                    <span className="text-[10px] uppercase font-black tracking-wider opacity-40 mr-2 shrink-0">
+                      Sort By:
+                    </span>
+                    
+                    {/* Last Played */}
                     <button
-                      onClick={() => loadStory(story.id)}
-                      className={`w-full text-left p-6 pr-24 rounded-3xl border transition-all relative flex items-center justify-between overflow-hidden cursor-pointer ${
-                        story.id === currentStoryId
-                          ? "border-sky-500 bg-sky-500/10"
-                          : genre === "romance"
-                            ? "border-rose-100 hover:bg-rose-50"
-                            : "border-white/5 hover:bg-white/5"
+                      id="sort-by-last-played"
+                      onClick={() => {
+                        if (librarySortBy === "lastPlayed") {
+                          setLibrarySortOrder(librarySortOrder === "asc" ? "desc" : "asc");
+                        } else {
+                          setLibrarySortBy("lastPlayed");
+                          setLibrarySortOrder("desc");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider font-extrabold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        librarySortBy === "lastPlayed"
+                          ? genre === "romance"
+                            ? "bg-rose-100 border-rose-200 text-rose-800 font-bold"
+                            : "bg-sky-500/10 border-sky-500/20 text-sky-400 font-bold"
+                          : `bg-transparent border-transparent opacity-50 hover:opacity-100 ${genre === "romance" ? "text-rose-900" : "text-white"}`
                       }`}
                     >
-                      <div className="flex items-center gap-6 relative z-10">
-                        <div
-                          className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
-                            story.genre === "romance"
-                              ? "bg-rose-100 text-rose-500"
-                              : story.genre === "crime"
-                                ? "bg-sky-900/40 text-sky-400"
-                                : "bg-purple-900/40 text-purple-400"
-                          }`}
-                        >
-                          {story.genre === "romance" ? (
-                            <Heart className="w-8 h-8" />
-                          ) : story.genre === "crime" ? (
-                            <Skull className="w-8 h-8" />
-                          ) : (
-                            <Moon className="w-8 h-8" />
-                          )}
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs font-black uppercase tracking-widest opacity-40">
-                            {story.genre || "Unknown"}
-                          </p>
-                          <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
-                            {story.characterArchetype || "Untitled Narrative"}
-                          </h4>
-                          <div className="flex gap-4 items-center">
-                            <span className="text-[10px] font-mono opacity-60">
-                              {story.updatedAt?.seconds
-                                ? new Date(
-                                    story.updatedAt.seconds * 1000,
-                                  ).toLocaleDateString()
-                                : "Active"}
-                            </span>
-                            <span
-                              className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
-                                story.status === "active"
-                                  ? "bg-green-500/20 text-green-500"
-                                  : "bg-gray-500/20 text-gray-500"
-                              }`}
-                            >
-                              {story.status}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <AnimatePresence>
-                        {hoveredStoryId === story.id && (
-                          <motion.div
-                            initial={{ opacity: 0, x: 20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 10 }}
-                            className={`absolute right-24 left-[12rem] top-0 bottom-0 py-6 px-10 flex flex-col justify-center bg-transparent pointer-events-none hidden md:flex`}
-                          >
-                            <div
-                              className={`h-full border-l pl-6 flex flex-col justify-center ${genre === "romance" ? "border-rose-100" : "border-white/10"}`}
-                            >
-                              <p
-                                className={`text-[10px] uppercase font-black tracking-widest opacity-30 mb-2`}
-                              >
-                                Premise Preview
-                              </p>
-                              <p
-                                className={`text-[11px] font-medium line-clamp-2 leading-relaxed italic ${genre === "romance" ? "text-rose-900/60" : "text-white/40"}`}
-                              >
-                                {story.customBasis ||
-                                  story.backstory ||
-                                  "The tapestry of fate is yet to be fully revealed..."}
-                              </p>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                      <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2 shrink-0" />
+                      <History className="w-3.5 h-3.5" />
+                      <span>Last Played</span>
+                      {librarySortBy === "lastPlayed" && (
+                        <span className="text-[9px] opacity-80">
+                          {librarySortOrder === "desc" ? "▼" : "▲"}
+                        </span>
+                      )}
                     </button>
 
-                    {/* Clean Delete Button positioned absolutely over the item */}
+                    {/* Genre */}
                     <button
-                      title="Dissolve Fate / Purge Media"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteStory(story.id);
+                      id="sort-by-genre"
+                      onClick={() => {
+                        if (librarySortBy === "genre") {
+                          setLibrarySortOrder(librarySortOrder === "asc" ? "desc" : "asc");
+                        } else {
+                          setLibrarySortBy("genre");
+                          setLibrarySortOrder("asc");
+                        }
                       }}
-                      className={`absolute right-6 top-1/2 -translate-y-1/2 p-3.5 rounded-2xl border transition-all z-20 flex items-center justify-center cursor-pointer ${
-                        genre === "romance"
-                          ? "border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 hover:text-rose-800"
-                          : "border-white/10 text-white/50 bg-white/[0.03] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/30"
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider font-extrabold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        librarySortBy === "genre"
+                          ? genre === "romance"
+                            ? "bg-rose-100 border-rose-200 text-rose-800 font-bold"
+                            : "bg-sky-500/10 border-sky-500/20 text-sky-400 font-bold"
+                          : `bg-transparent border-transparent opacity-50 hover:opacity-100 ${genre === "romance" ? "text-rose-900" : "text-white"}`
                       }`}
                     >
-                      <Trash className="w-4 h-4" />
+                      <Book className="w-3.5 h-3.5" />
+                      <span>Genre</span>
+                      {librarySortBy === "genre" && (
+                        <span className="text-[9px] opacity-80">
+                          {librarySortOrder === "desc" ? "▼" : "▲"}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Alphabetical */}
+                    <button
+                      id="sort-by-alphabetical"
+                      onClick={() => {
+                        if (librarySortBy === "alphabetical") {
+                          setLibrarySortOrder(librarySortOrder === "asc" ? "desc" : "asc");
+                        } else {
+                          setLibrarySortBy("alphabetical");
+                          setLibrarySortOrder("asc");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider font-extrabold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        librarySortBy === "alphabetical"
+                          ? genre === "romance"
+                            ? "bg-rose-100 border-rose-200 text-rose-800 font-bold"
+                            : "bg-sky-500/10 border-sky-500/20 text-sky-400 font-bold"
+                          : `bg-transparent border-transparent opacity-50 hover:opacity-100 ${genre === "romance" ? "text-rose-900" : "text-white"}`
+                      }`}
+                    >
+                      <ArrowDownAZ className="w-3.5 h-3.5" />
+                      <span>Alphabetical</span>
+                      {librarySortBy === "alphabetical" && (
+                        <span className="text-[9px] opacity-80">
+                          {librarySortOrder === "desc" ? "▼" : "▲"}
+                        </span>
+                      )}
                     </button>
                   </div>
-                ))
+                </div>
               )}
+
+              <div className="flex-1 overflow-y-auto space-y-4 p-4 custom-scrollbar">
+                {userStories.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                    <LibraryIcon className="w-12 h-12" />
+                    <p className="text-xs font-black uppercase tracking-[0.3em]">
+                      No stories woven yet
+                    </p>
+                  </div>
+                ) : sortedAndFilteredStories.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center opacity-40 gap-4 py-12">
+                    <Search className="w-12 h-12 text-gray-500/50" />
+                    <div className="text-center space-y-1">
+                      <p className="text-xs font-black uppercase tracking-[0.3em] opacity-80">
+                        No stories found
+                      </p>
+                      <p className="text-[10px] font-light text-gray-400">
+                        Try modifying your search query or reset filters
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  sortedAndFilteredStories.map((story) => (
+                    <div 
+                      key={story.id} 
+                      className="relative group w-full"
+                      onMouseEnter={() => setHoveredStoryId(story.id)}
+                      onMouseLeave={() => setHoveredStoryId(null)}
+                    >
+                      <button
+                        onClick={() => loadStory(story.id)}
+                        className={`w-full text-left p-6 pr-24 rounded-3xl border transition-all relative flex items-center justify-between overflow-hidden cursor-pointer ${
+                          story.id === currentStoryId
+                            ? "border-sky-500 bg-sky-500/10"
+                            : genre === "romance"
+                              ? "border-rose-100 hover:bg-rose-50"
+                              : "border-white/5 hover:bg-white/5"
+                        }`}
+                      >
+                        <div className="flex items-center gap-6 relative z-10">
+                          <div
+                            className={`w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 ${
+                              story.genre === "romance"
+                                ? "bg-rose-100 text-rose-500"
+                                : story.genre === "crime"
+                                  ? "bg-sky-900/40 text-sky-400"
+                                  : "bg-purple-900/40 text-purple-400"
+                            }`}
+                          >
+                            {story.genre === "romance" ? (
+                              <Heart className="w-8 h-8" />
+                            ) : story.genre === "crime" ? (
+                              <Skull className="w-8 h-8" />
+                            ) : (
+                              <Moon className="w-8 h-8" />
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-black uppercase tracking-widest opacity-40">
+                              {story.genre || "Unknown"}
+                            </p>
+                            <h4 className="text-lg font-bold tracking-tight truncate max-w-[200px] md:max-w-md">
+                              {story.characterArchetype || "Untitled Narrative"}
+                            </h4>
+                            <div className="flex gap-4 items-center">
+                              <span className="text-[10px] font-mono opacity-60">
+                                {story.updatedAt?.seconds
+                                  ? new Date(
+                                      story.updatedAt.seconds * 1000,
+                                    ).toLocaleDateString()
+                                  : "Active"}
+                              </span>
+                              <span
+                                className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
+                                  story.status === "active"
+                                    ? "bg-green-500/20 text-green-500"
+                                    : "bg-gray-500/20 text-gray-500"
+                                }`}
+                              >
+                                {story.status}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <AnimatePresence>
+                          {hoveredStoryId === story.id && (
+                            <motion.div
+                              initial={{ opacity: 0, x: 20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, x: 10 }}
+                              className={`absolute right-24 left-[12rem] top-0 bottom-0 py-6 px-10 flex flex-col justify-center bg-transparent pointer-events-none hidden md:flex`}
+                            >
+                              <div
+                                className={`h-full border-l pl-6 flex flex-col justify-center ${genre === "romance" ? "border-rose-100" : "border-white/10"}`}
+                              >
+                                <p
+                                  className={`text-[10px] uppercase font-black tracking-widest opacity-30 mb-2`}
+                                >
+                                  Premise Preview
+                                </p>
+                                <p
+                                  className={`text-[11px] font-medium line-clamp-2 leading-relaxed italic ${genre === "romance" ? "text-rose-900/60" : "text-white/40"}`}
+                                >
+                                  {story.customBasis ||
+                                    story.backstory ||
+                                    "The tapestry of fate is yet to be fully revealed..."}
+                                </p>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                        <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-40 transition-all transform group-hover:translate-x-2 shrink-0" />
+                      </button>
+
+                      {/* Clean Delete Button positioned absolutely over the item */}
+                      <button
+                        title="Dissolve Fate / Purge Media"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteStory(story.id);
+                        }}
+                        className={`absolute right-6 top-1/2 -translate-y-1/2 p-3.5 rounded-2xl border transition-all z-20 flex items-center justify-center cursor-pointer ${
+                          genre === "romance"
+                            ? "border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 hover:text-rose-800"
+                            : "border-white/10 text-white/50 bg-white/[0.03] hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/30"
+                        }`}
+                      >
+                        <Trash className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Google Keep Workspace Board Modal */}
       {showKeepNotes && currentStoryId && (
@@ -3494,6 +3756,29 @@ function App() {
       )}
 
       {/* Persistent Codex & Lore Glossary Modal */}
+      {showMonetization && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 backdrop-blur-xl bg-black/80 animate-fadeIn hover:cursor-default overflow-y-auto">
+          <div className="w-full max-w-5xl bg-[#090C16] border border-white/5 rounded-[2.5rem] p-6 md:p-8 relative shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button
+              onClick={() => setShowMonetization(false)}
+              className="absolute top-6 right-6 p-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all text-white/50 hover:text-white"
+              title="Close Panel"
+            >
+              <span className="text-sm font-mono px-2">✕</span>
+            </button>
+            <div className="mt-4">
+              <MonetizationHub
+                user={user}
+                activeGenre={genre || hoveredGenre || "paranormal"}
+                triggerNotification={(msg) => {
+                  console.log("[TBR Support Hub Modal]:", msg);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCodex && currentStoryId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 backdrop-blur-xl bg-black/70 animate-fadeIn hover:cursor-default">
           <div className="w-full max-w-6xl h-[85vh] md:h-[90vh]">
@@ -3666,6 +3951,25 @@ function App() {
             <span>Back to Bookstore</span>
             <ExternalLink className="w-3 h-3" />
           </a>
+          <button
+            onClick={() => setShowMonetization(true)}
+            className={`hidden sm:flex items-center gap-1.5 px-3 py-1 hover:scale-102 rounded-full border text-[10px] font-bold uppercase tracking-wider transition-all font-sans cursor-pointer relative overflow-hidden group ${
+              genre === "romance"
+                ? "bg-rose-500/10 border-rose-400 text-rose-800 hover:bg-rose-500/20"
+                : genre === "crime"
+                  ? "bg-sky-500/10 border-sky-450 text-sky-400 hover:bg-sky-500/20"
+                  : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+            }`}
+            title="Curated book recommendations from Bookshop.org matching your stories!"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="font-extrabold">Shop Curated Books</span>
+            <span className="bg-amber-500/20 text-amber-300 text-[8px] px-1 py-0.5 rounded font-black tracking-tight uppercase scale-95 shrink-0">10% commission</span>
+            <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+            </span>
+          </button>
         </div>
         
         {/* Responsive Header Controls */}
@@ -3750,6 +4054,23 @@ function App() {
                 title="Story Library"
               >
                 <LibraryIcon className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setShowMonetization(true)}
+                className={`p-2 rounded-full transition-colors relative ${
+                  showMonetization
+                    ? "text-amber-400 bg-amber-500/20 border border-amber-500/30"
+                    : genre === "romance"
+                      ? "text-rose-400 hover:bg-rose-50"
+                      : "text-gray-400 hover:bg-white/5"
+                }`}
+                title="View Curated Bookshop Recommendations (Affiliate Hub)"
+              >
+                <BookOpen className="w-4 h-4 text-amber-400" />
+                <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                </span>
               </button>
               {currentStoryId && (
                 <button
@@ -3983,6 +4304,14 @@ function App() {
           {/* Desktop Profiler Display */}
           {user && (
             <div className="hidden md:flex items-center gap-3 px-4 py-2 rounded-full bg-white/5 border border-white/5">
+              <div 
+                onClick={() => setShowMonetization(true)}
+                className="hover:scale-[1.03] transition-all flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-full text-[9px] font-mono text-amber-400 font-bold cursor-pointer"
+                title="View Account Balance / Buy Credits"
+              >
+                <Coins className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>{userCredits} Credits</span>
+              </div>
               {user.photoURL ? (
                 <img
                   src={user.photoURL}
@@ -4133,6 +4462,22 @@ function App() {
                 >
                   <LibraryIcon className="w-5 h-5 text-sky-400 shrink-0" />
                   <span>Story Library</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowMonetization(true);
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full py-4 px-6 rounded-2xl flex items-center gap-4 font-bold text-xs uppercase tracking-wider text-left border relative overflow-hidden ${
+                    genre === "romance" 
+                      ? "bg-rose-500 text-white border-rose-400 hover:bg-rose-600" 
+                      : "bg-amber-500 text-slate-900 border-amber-400 hover:bg-amber-600"
+                  }`}
+                >
+                  <BookOpen className="w-5 h-5 shrink-0" />
+                  <span className="flex-1 font-extrabold text-xs">Curated Bookshop Recs</span>
+                  <span className="bg-current/15 text-[8px] px-1 py-0.5 rounded font-black tracking-tight uppercase scale-90 shrink-0">10% commission</span>
                 </button>
 
                 {currentStoryId && (
@@ -4367,15 +4712,115 @@ function App() {
                   A creative companion suite of To Be Read (TBR) Clackamas Book Exchange.
                 </p>
               </div>
-              <div className="flex flex-col items-center gap-6">
+              <div className="w-full max-w-sm px-6 py-6 rounded-3xl bg-zinc-950/80 border border-white/5 space-y-6">
+                <div className="flex border-b border-white/5 pb-2">
+                  <button
+                    onClick={() => setEmailMode("login")}
+                    className={`flex-1 text-center py-2 text-xs font-mono uppercase tracking-wider font-extrabold transition-all border-b-2 ${
+                      emailMode === "login"
+                        ? "text-amber-400 border-amber-400"
+                        : "text-zinc-500 border-transparent hover:text-white"
+                    }`}
+                  >
+                    Login
+                  </button>
+                  <button
+                    onClick={() => setEmailMode("signup")}
+                    className={`flex-1 text-center py-2 text-xs font-mono uppercase tracking-wider font-extrabold transition-all border-b-2 ${
+                      emailMode === "signup"
+                        ? "text-amber-400 border-amber-400"
+                        : "text-zinc-500 border-transparent hover:text-white"
+                    }`}
+                  >
+                    Register
+                  </button>
+                </div>
+
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!emailVal.trim() || !passwordVal.trim()) {
+                    setError("Please fill in all email and password parameters!");
+                    return;
+                  }
+                  setAuthSubmitting(true);
+                  setError(null);
+                  try {
+                    if (emailMode === "login") {
+                      await signInWithEmailAndPassword(auth, emailVal, passwordVal);
+                    } else {
+                      await createUserWithEmailAndPassword(auth, emailVal, passwordVal);
+                    }
+                  } catch (err: any) {
+                    console.error("Email Auth Error:", err);
+                    let cleanMsg = err?.message || String(err);
+                    if (err.code === "auth/user-not-found") cleanMsg = "No chronicler found with this email. Do you want to register?";
+                    else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") cleanMsg = "Incorrect passcode or login credentials. Please try again.";
+                    else if (err.code === "auth/weak-password") cleanMsg = "Your passcode must be at least 6 characters.";
+                    else if (err.code === "auth/email-already-in-use") cleanMsg = "An account with this email already exists.";
+                    setError(cleanMsg);
+                  } finally {
+                    setAuthSubmitting(false);
+                  }
+                }} className="space-y-4 text-left">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold tracking-widest text-zinc-400 font-mono block">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="scribe@gmail.com"
+                      value={emailVal}
+                      onChange={(e) => setEmailVal(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 focus:border-amber-400 rounded-xl px-4 py-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold tracking-widest text-zinc-400 font-mono block">
+                      Passcode
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={passwordVal}
+                      onChange={(e) => setPasswordVal(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 focus:border-amber-400 rounded-xl px-4 py-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-950 font-mono font-bold uppercase tracking-wider text-xs text-slate-950 py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {authSubmitting ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                    ) : (
+                      <>
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>{emailMode === "login" ? "Ascend to Fate" : "Create Chronicle Key"}</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <div className="flex items-center justify-center gap-2 py-1 text-[10px] text-zinc-500 font-mono uppercase tracking-widest font-black">
+                  <span className="h-[1px] w-8 bg-white/5" />
+                  <span>Or Complete via</span>
+                  <span className="h-[1px] w-8 bg-white/5" />
+                </div>
+
                 <button
                   onClick={login}
-                  className="flex items-center gap-3 bg-white text-black px-10 py-4 rounded-full font-medium uppercase tracking-[0.2em] shadow-xl shadow-white/5 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 bg-white hover:bg-zinc-200 text-black py-3 rounded-xl font-mono font-extrabold uppercase tracking-widest text-[9px] shadow-lg transition-all cursor-pointer"
                 >
-                  <LogIn className="w-4 h-4" />
-                  Login with Google
+                  <LogIn className="w-3.5 h-3.5 text-black" />
+                  <span>Sign in with Google</span>
                 </button>
-                <div className="pt-6 border-t border-white/5 w-full flex flex-col items-center gap-1">
+              </div>
+              <div className="pt-6 border-t border-white/5 w-full flex flex-col items-center gap-1">
                   <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest">A Scholarly Companion Project</span>
                   <a
                     href="https://to-be-read-clackamas.netlify.app/"
@@ -4387,7 +4832,6 @@ function App() {
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
-              </div>
               {error && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm max-w-sm mt-4">
                   {error}
@@ -6264,6 +6708,90 @@ function App() {
                                         />
                                       ),
                                     )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Contextual Bookshop Affiliate Recommendation Card */}
+                              {genre && (
+                                <div className={`p-5 rounded-3xl border mt-6 transition-all duration-500 hover:scale-[1.01] ${
+                                  genre === "romance"
+                                    ? "bg-rose-50 border-rose-100 text-rose-950"
+                                    : genre === "crime"
+                                      ? "bg-[#0c0f1a] border-sky-900/40 text-sky-100"
+                                      : "bg-[#0a0517] border-purple-900/40 text-purple-100"
+                                }`}>
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <BookOpen className={`w-4 h-4 shrink-0 ${genre === "romance" ? "text-rose-600" : "text-amber-400"}`} />
+                                    <span className={`text-[10px] uppercase font-black tracking-widest flex-1 ${genre === "romance" ? "text-rose-900/60" : "text-gray-400"}`}>
+                                      TBR BOOKSHOP RECS
+                                    </span>
+                                    <span className="bg-amber-400/20 text-amber-300 text-[8px] font-black tracking-tight uppercase px-1.5 py-0.5 rounded border border-amber-400/30">
+                                      10% Commission
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="flex gap-4">
+                                    <img
+                                      src={
+                                        genre === "romance"
+                                          ? "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=200"
+                                          : genre === "crime"
+                                            ? "https://images.unsplash.com/photo-1506880018603-83d5b814b5a6?auto=format&fit=crop&q=80&w=200"
+                                            : "https://images.unsplash.com/photo-1518376186638-27b99b53112a?auto=format&fit=crop&q=80&w=200"
+                                      }
+                                      alt="Curated Story Book"
+                                      className="w-14 h-20 object-cover rounded-xl shadow-md border border-white/5 shrink-0"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <div className="flex flex-col justify-between flex-1 min-w-0">
+                                      <div>
+                                        <h5 className={`font-serif italic font-bold text-sm tracking-tight truncate ${genre === "romance" ? "text-rose-950" : "text-white"}`}>
+                                          {genre === "romance" ? "Book Lovers" : genre === "crime" ? "The Big Sleep" : "The Ocean at the End of the Lane"}
+                                        </h5>
+                                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">
+                                          {genre === "romance" ? "Emily Henry" : genre === "crime" ? "Raymond Chandler" : "Neil Gaiman"}
+                                        </p>
+                                        <p className={`text-[11px] leading-snug line-clamp-2 mt-1 ${genre === "romance" ? "text-rose-900/70" : "text-gray-400"}`}>
+                                          {genre === "romance" 
+                                            ? "Enjoying bookstore chemistry? Two rival agents collide in North Carolina."
+                                            : genre === "crime"
+                                              ? "Rain-slicked noir templates. Detective Marlowe sifts gangland crime."
+                                              : "Etherean folklore elements matching the Sunken Spindle's seawater runes."
+                                          }
+                                        </p>
+                                      </div>
+                                      
+                                      <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-current/5">
+                                        <a
+                                          href={
+                                            genre === "romance"
+                                              ? "https://bookshop.org/search?keywords=Emily+Henry+Book+Lovers"
+                                              : genre === "crime"
+                                                ? "https://bookshop.org/search?keywords=Raymond+Chandler+The+Big+Sleep"
+                                                : "https://bookshop.org/search?keywords=The+Ocean+at+the+End+of+the+Lane+Neil+Gaiman"
+                                          }
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className={`inline-flex items-center gap-1.5 px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-xl transition-all shadow-sm ${
+                                            genre === "romance"
+                                              ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-200/55"
+                                              : "bg-amber-500 hover:bg-amber-600 text-slate-950"
+                                          }`}
+                                        >
+                                          <span>Buy Book</span>
+                                          <ExternalLink className="w-2.5 h-2.5" />
+                                        </a>
+                                        <button
+                                          onClick={() => setShowMonetization(true)}
+                                          className={`text-[9px] uppercase tracking-widest font-black transition-all hover:underline ${
+                                            genre === "romance" ? "text-rose-700 hover:text-rose-900" : "text-amber-400 hover:text-amber-300"
+                                          }`}
+                                        >
+                                          Discover All Recs
+                                        </button>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               )}

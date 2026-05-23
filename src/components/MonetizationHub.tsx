@@ -226,27 +226,45 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
     setPaymentStep("stripe");
   };
 
+  const launchRealStripeCheckout = async (creditsAmount: number, priceInCents: number) => {
+    try {
+      const response = await fetch("/api/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user?.uid || "guest",
+          email: user?.email || "",
+          creditsAmount,
+          priceInCents
+        })
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const session = await response.json();
+      if (session.url) {
+        if (triggerNotification) triggerNotification("Passing connection securely to Stripe Checkout...");
+        // Redirect browser to official checkout session
+        window.location.href = session.url;
+      } else {
+        throw new Error("Stripe did not yield a redirection anchor.");
+      }
+    } catch (stripeErr: any) {
+      console.error("[Stripe Redirect Event fails]:", stripeErr.message);
+      if (triggerNotification) {
+        triggerNotification("Stripe portal offline: " + stripeErr.message);
+      }
+    }
+  };
+
   const processStripeCheckout = async () => {
     setStripePaying(true);
-    // Simulate real high-latency Stripe handshaking
-    await new Promise(r => setTimeout(r, 2000));
     try {
-      if (db) {
-        await addDoc(collection(db, "commissions"), {
-          userId: user?.uid || "guest",
-          email: user?.email || "anonymous_benefactor@tbr.org",
-          parameters: commissionForm,
-          status: "pending_review",
-          paymentCompleted: true,
-          amountPaid: commissionForm.deliveryFormat === "physical" ? 45.00 : 15.00,
-          createdAt: new Date().toISOString()
-        });
-      }
-      setPaymentStep("success");
-      if (triggerNotification) triggerNotification("Saga commission booked! Our literary guild is aligning your timeline.");
+      const priceCents = commissionForm.deliveryFormat === "physical" ? 4500 : 1500;
+      const creditsAmount = commissionForm.deliveryFormat === "physical" ? 50 : 15;
+      await launchRealStripeCheckout(creditsAmount, priceCents);
     } catch (err) {
       console.error(err);
-      setPaymentStep("success"); // Fallback visually
     } finally {
       setStripePaying(false);
     }
@@ -254,25 +272,12 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
 
   const buyCommunityCoffee = async (coffeesCount: number) => {
     setDonatingCoffee(true);
-    await new Promise(r => setTimeout(r, 1200));
     try {
-      if (db) {
-        // Log transaction safely
-        await addDoc(collection(db, "coffee_ledger"), {
-          userId: user?.uid || "guest",
-          coffeesCount,
-          amount: coffeesCount * 5,
-          timestamp: new Date().toISOString()
-        });
-      }
-      setTotalCoffeeDonated(prev => prev + coffeesCount);
-      setCoffeeSuccess(true);
-      if (triggerNotification) triggerNotification(`Generous support registered! TBR Bookstore says thank you.`);
-      setTimeout(() => setCoffeeSuccess(false), 5000);
+      const creditsToBuy = coffeesCount === 1 ? 5 : 30;
+      const priceCents = coffeesCount === 1 ? 500 : 2500;
+      await launchRealStripeCheckout(creditsToBuy, priceCents);
     } catch (err) {
       console.error(err);
-      setTotalCoffeeDonated(prev => prev + coffeesCount);
-      setCoffeeSuccess(true);
     } finally {
       setDonatingCoffee(false);
     }
@@ -280,10 +285,13 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
 
   const unlockStoryPack = async () => {
     setClaimingPack(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setPackUnlocked(true);
-    setClaimingPack(false);
-    if (triggerNotification) triggerNotification("Lore pack unlocked! Alternate paths added to your grimoire.");
+    try {
+      await launchRealStripeCheckout(5, 499);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setClaimingPack(false);
+    }
   };
 
   const recs = GENRE_RECOMMENDATIONS[currentGenre] || GENRE_RECOMMENDATIONS.paranormal;

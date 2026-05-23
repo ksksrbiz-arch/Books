@@ -9,6 +9,7 @@
         "email": { "type": "string", "description": "User's email address" },
         "displayName": { "type": "string", "description": "User's display name" },
         "photoURL": { "type": "string", "description": "User's profile photo URL" },
+        "credits": { "type": "integer", "description": "User credits for storyteller" },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created" }
       },
       "required": ["uid", "email", "createdAt"]
