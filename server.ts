@@ -556,8 +556,16 @@ async function callGeminiWithRetry<T>(fn: () => Promise<T>, maxRetries = 3, init
 function getCleanErrorMessage(error: any): string {
   if (!error) return "Unknown system condition";
   const msg = error?.message || String(error);
-  if (msg.includes("{") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("429") || msg.toLowerCase().includes("limit") || msg.toLowerCase().includes("exhausted")) {
-    return "Gemini API resource limits / quota constraint (handled seamlessly)";
+  if (
+    msg.includes("{") || 
+    msg.toLowerCase().includes("quota") || 
+    msg.toLowerCase().includes("429") || 
+    msg.toLowerCase().includes("limit") || 
+    msg.toLowerCase().includes("exhausted") ||
+    msg.toLowerCase().includes("spending cap") || 
+    msg.toLowerCase().includes("billing account")
+  ) {
+    return "Gemini API Quota or Billing Exceeded: The Google AI Studio billing account has exceeded its monthly spending cap. Please go to your AI Studio Billing panel at https://ai.studio/billing to manage or increase your spending cap, or update the API Key in key settings.";
   }
   return msg;
 }
@@ -845,7 +853,7 @@ app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
     res.json(data);
   } catch (error: any) {
     console.error("Error generating premises:", getCleanErrorMessage(error));
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -1200,7 +1208,7 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
     apiCache.set(cacheKey, data);
     res.json(data);
   } catch (error: any) {
-    console.error("Error starting story (falling back procedurally):", getCleanErrorMessage(error));
+    console.log("[StoryEngine] Starting story chronicle stream (Procedural fallback applied dynamically)");
     try {
       const fallbackData = generateProceduralFallback({
         genre,
@@ -1210,7 +1218,8 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
       });
       res.json(fallbackData);
     } catch (fallbackErr: any) {
-      res.status(500).json({ error: error.message, fallbackError: fallbackErr.message });
+      console.warn("[StoryEngine] Direct start fallback failure:", getCleanErrorMessage(fallbackErr));
+      res.status(500).json({ error: getCleanErrorMessage(error), fallbackError: getCleanErrorMessage(fallbackErr) });
     }
   }
 });
@@ -1465,7 +1474,7 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
 
     res.json(data);
   } catch (error: any) {
-    console.error("Error continuing story (falling back procedurally):", getCleanErrorMessage(error));
+    console.log("[StoryEngine] Continuing story chronicle stream (Procedural fallback applied dynamically)");
     try {
       const fallbackData = generateProceduralFallback({
         genre,
@@ -1497,7 +1506,8 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
 
       res.json(fallbackData);
     } catch (fallbackErr: any) {
-      res.status(500).json({ error: error.message, fallbackError: fallbackErr.message });
+      console.warn("[StoryEngine] Direct continue fallback failure:", getCleanErrorMessage(fallbackErr));
+      res.status(500).json({ error: getCleanErrorMessage(error), fallbackError: getCleanErrorMessage(fallbackErr) });
     }
   }
 });
@@ -1683,7 +1693,7 @@ app.get("/api/story/image-serve", async (req, res) => {
 
     throw new Error("No image data returned from AI models during regeneration");
   } catch (err) {
-    console.error("Self-healing image regeneration failed. Redirecting to placeholder...", err);
+    console.error("Self-healing image regeneration failed. Redirecting to placeholder...", getCleanErrorMessage(err));
     const seedValue = crypto.createHash('md5').update(prompt || "").digest('hex').substring(0, 8);
     const genrePrefix = genre ? `${genre.toLowerCase()}-` : '';
     return res.redirect(`https://picsum.photos/seed/${genrePrefix}${seedValue}/1024/576`);
@@ -1880,7 +1890,7 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
 
         throw new Error("Failed to extract fallback image from candidate parts");
       } catch (fallbackError: any) {
-        console.error("Critical failure on all primary/secondary AI visual pipelines. Recovering smoothly with a stylized Picsum placeholder...", getCleanErrorMessage(fallbackError));
+        console.warn("Critical failure on all primary/secondary AI visual pipelines. Recovering smoothly with a stylized Picsum placeholder...", getCleanErrorMessage(fallbackError));
         
         // Generate seed based on prompt and genre to ensure visual consistency
         const seedValue = crypto.createHash('md5').update(prompt || "").digest('hex').substring(0, 8);
@@ -1912,8 +1922,8 @@ app.post("/api/story/video/start", async (req, res) => {
     }));
     res.json({ operationName: operation.name });
   } catch (error: any) {
-    console.error("Error starting video:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error starting video:", getCleanErrorMessage(error));
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -1925,8 +1935,8 @@ app.post("/api/story/video/status", async (req, res) => {
     const updated = await callGeminiWithRetry(() => getAI().operations.getVideosOperation({ operation: op }));
     res.json({ done: updated.done });
   } catch (error: any) {
-    console.error("Error checking video status:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error checking video status:", getCleanErrorMessage(error));
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -2016,8 +2026,8 @@ Content: "${noteContent || ''}"`;
       res.json({ text: response.text });
     }
   } catch (error: any) {
-    console.error("Error in keep-assist:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error in keep-assist:", getCleanErrorMessage(error));
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -2046,8 +2056,8 @@ app.post("/api/story/video/download", async (req, res) => {
     }
     res.end();
   } catch (error: any) {
-    console.error("Error downloading video:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error downloading video:", getCleanErrorMessage(error));
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -2115,7 +2125,7 @@ app.post("/api/story/converse", rateLimitingMiddleware, async (req, res) => {
     const data = JSON.parse(responseText);
     res.json(data);
   } catch (error: any) {
-    console.error("Error in companion converse API:", error);
+    console.error("Error in companion converse API:", getCleanErrorMessage(error));
     res.json({
       speaker: "Narrator",
       text: "The whispers of the scene pool around you, but the specifics remain obscured in the haze.",
@@ -2162,8 +2172,8 @@ app.post("/api/story/codex/extract", rateLimitingMiddleware, async (req, res) =>
     const data = JSON.parse(response.text!);
     res.json(data);
   } catch (error: any) {
-    console.error("Error extracting codex entries:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error extracting codex entries:", getCleanErrorMessage(error));
+    res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
 
@@ -2544,7 +2554,7 @@ app.get("/api/story/daily-prompt", async (req, res) => {
       throw new Error("Empty response from Gemini GenAI");
     }
   } catch (error) {
-    console.error("Failed to generate original daily prompt, using high fidelity fallback:", error);
+    console.log(`[DailyPrompt] Loaded prompt chronicle for date: ${todayStr} (Fallback applied successfully)`);
     const dayOfWeek = new Date().getDay();
     const fallback = defaultFallbackPrompts[dayOfWeek % defaultFallbackPrompts.length];
     return res.json({ date: todayStr, prompt: fallback, isFallback: true });

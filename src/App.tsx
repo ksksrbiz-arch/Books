@@ -4753,10 +4753,17 @@ function App() {
                   } catch (err: any) {
                     console.error("Email Auth Error:", err);
                     let cleanMsg = err?.message || String(err);
-                    if (err.code === "auth/user-not-found") cleanMsg = "No chronicler found with this email. Do you want to register?";
-                    else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") cleanMsg = "Incorrect passcode or login credentials. Please try again.";
-                    else if (err.code === "auth/weak-password") cleanMsg = "Your passcode must be at least 6 characters.";
-                    else if (err.code === "auth/email-already-in-use") cleanMsg = "An account with this email already exists.";
+                    if (err.code === "auth/user-not-found") {
+                      cleanMsg = "No chronicler found with this email. Do you want to register?";
+                    } else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+                      cleanMsg = "Incorrect passcode or login credentials. Please try again.";
+                    } else if (err.code === "auth/weak-password") {
+                      cleanMsg = "Your passcode must be at least 6 characters.";
+                    } else if (err.code === "auth/email-already-in-use") {
+                      cleanMsg = "An account with this email already exists.";
+                    } else if (err.code === "auth/operation-not-allowed") {
+                      cleanMsg = "Email/Password sign-in is not enabled in the Firebase Console. Please go to Authentication -> Sign-in method and enable 'Email/Password' to register or sign in.";
+                    }
                     setError(cleanMsg);
                   } finally {
                     setAuthSubmitting(false);
@@ -5002,11 +5009,40 @@ function App() {
               )}
 
               {error && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm w-full max-w-xl mx-auto flex items-center justify-between z-10">
-                  <span>{error}</span>
-                  <button onClick={() => setError(null)} className="text-white bg-red-500/20 hover:bg-red-500/40 px-3 py-1 rounded-full text-xs transition-colors">
-                     Dismiss
-                  </button>
+                <div className={`p-6 rounded-[2rem] border w-full max-w-2xl mx-auto flex flex-col justify-between gap-4 z-10 backdrop-blur-md transition-all text-left ${
+                  error.toLowerCase().includes("quota") || error.toLowerCase().includes("billing exceeded") || error.toLowerCase().includes("spending cap") || error.toLowerCase().includes("429") || error.toLowerCase().includes("limit")
+                    ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
+                    : "bg-red-500/10 border-red-500/20 text-red-400"
+                }`}>
+                  <div className="flex gap-4">
+                    <span className="text-xl">⚠️</span>
+                    <div className="space-y-1 flex-1">
+                      <p className="font-bold text-xs uppercase tracking-widest text-amber-400 font-mono">System Resource Alert</p>
+                      <p className="text-sm leading-relaxed">{error}</p>
+                      {(error.toLowerCase().includes("quota") || error.toLowerCase().includes("billing exceeded") || error.toLowerCase().includes("spending cap") || error.toLowerCase().includes("429") || error.toLowerCase().includes("limit")) && (
+                        <div className="mt-3 text-xs leading-relaxed text-gray-300 space-y-2 border-t border-white/5 pt-3">
+                          <p className="opacity-90"><strong className="text-amber-400">Resolution Path for Administrators:</strong></p>
+                          <ul className="list-disc pl-4 space-y-1 opacity-75">
+                            <li>Check your monthly spending caps at <a href="https://ai.studio/billing" target="_blank" rel="noreferrer" className="underline text-amber-400 hover:text-amber-300">Google AI Studio Billing</a>.</li>
+                            <li>Configure or swap your <strong className="text-amber-400">GEMINI_API_KEY</strong> environment secret using the builder's Secrets panel to use a billing-ready key.</li>
+                            <li>If you are a reader, please reload the saga later or alert the chronicle creators.</li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex justify-end mt-2">
+                    <button 
+                      onClick={() => setError(null)} 
+                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                        error.toLowerCase().includes("quota") || error.toLowerCase().includes("billing exceeded") || error.toLowerCase().includes("spending cap") || error.toLowerCase().includes("429") || error.toLowerCase().includes("limit")
+                          ? "text-slate-950 bg-amber-400 hover:bg-amber-300 active:scale-95 cursor-pointer"
+                          : "text-white bg-red-500/20 hover:bg-red-500/40 active:scale-95 cursor-pointer"
+                      }`}
+                    >
+                      Dismiss Alert
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -6398,7 +6434,22 @@ function App() {
                                   )}
 
                                   <div className="space-y-4">
-                                    {currentNode.choices?.map((choice, idx) => {
+                                    <motion.div
+                                      className="space-y-4"
+                                      variants={{
+                                        hidden: { opacity: 0 },
+                                        visible: {
+                                          opacity: 1,
+                                          transition: {
+                                            staggerChildren: settings.reducedMotion ? 0 : 0.08,
+                                            delayChildren: 0.05
+                                          }
+                                        }
+                                      }}
+                                      initial="hidden"
+                                      animate="visible"
+                                    >
+                                      {currentNode.choices?.map((choice, idx) => {
                                       const flickerClass = settings.reducedMotion || settings.readerMode
                                         ? ""
                                         : genre === "romance"
@@ -6408,7 +6459,25 @@ function App() {
                                             : "animate-flicker-neon";
 
                                       return (
-                                        <div key={idx} className="space-y-2">
+                                        <motion.div
+                                          key={idx}
+                                          className="space-y-2"
+                                          variants={{
+                                            hidden: settings.reducedMotion
+                                              ? { opacity: 0, y: 5 }
+                                              : { opacity: 0, y: 20, filter: "brightness(0.55) blur(1px)" },
+                                            visible: {
+                                              opacity: 1,
+                                              y: 0,
+                                              filter: "brightness(1) blur(0px)",
+                                              transition: {
+                                                type: "spring",
+                                                stiffness: 100,
+                                                damping: 15
+                                              }
+                                            }
+                                          }}
+                                        >
                                           <motion.div
                                             role="button"
                                             tabIndex={0}
@@ -6527,7 +6596,7 @@ function App() {
                                               )}
                                             </AnimatePresence>
                                           </motion.div>
-                                        </div>
+                                        </motion.div>
                                       );
                                     })}
 
@@ -6543,9 +6612,30 @@ function App() {
                                             handleChoice(currentNode.choices![randomIndex]);
                                           }
                                         }}
-                                        initial={{ opacity: 0, scale: 0.98 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        transition={{ delay: 0.9 }}
+                                        variants={{
+                                          hidden: settings.reducedMotion
+                                            ? { opacity: 0, scale: 0.98 }
+                                            : { opacity: 0, scale: 0.98, y: 15 },
+                                          visible: {
+                                            opacity: 1,
+                                            scale: 1,
+                                            y: 0,
+                                            transition: {
+                                              type: "spring",
+                                              stiffness: 100,
+                                              damping: 15
+                                            }
+                                          }
+                                        }}
+                                        whileHover={settings.reducedMotion ? undefined : { 
+                                          scale: 1.015,
+                                          y: -2,
+                                          transition: { type: "spring", stiffness: 450, damping: 25 }
+                                        }}
+                                        whileTap={settings.reducedMotion ? undefined : { 
+                                          scale: 0.99,
+                                          y: 0,
+                                        }}
                                         onClick={() => {
                                           const randomIndex = Math.floor(Math.random() * (currentNode.choices?.length || 1));
                                           handleChoice(currentNode.choices![randomIndex]);
@@ -6564,6 +6654,7 @@ function App() {
                                         <ArrowRight className="w-4 h-4 text-amber-300 transform group-hover:translate-x-1 transition-transform" />
                                       </motion.div>
                                     )}
+                                  </motion.div>
 
                                     {/* Temporal Whispers / Micro-actions */}
                                     <div className="pt-4 border-t border-white/5 mt-2 space-y-3">
@@ -6766,10 +6857,10 @@ function App() {
                                         <a
                                           href={
                                             genre === "romance"
-                                              ? "https://bookshop.org/search?keywords=Emily+Henry+Book+Lovers"
+                                              ? "https://bookshop.org/search?keywords=Emily+Henry+Book+Lovers&referrer=ClackamasBookExchange"
                                               : genre === "crime"
-                                                ? "https://bookshop.org/search?keywords=Raymond+Chandler+The+Big+Sleep"
-                                                : "https://bookshop.org/search?keywords=The+Ocean+at+the+End+of+the+Lane+Neil+Gaiman"
+                                                ? "https://bookshop.org/search?keywords=Raymond+Chandler+The+Big+Sleep&referrer=ClackamasBookExchange"
+                                                : "https://bookshop.org/search?keywords=The+Ocean+at+the+End+of+the+Lane+Neil+Gaiman&referrer=ClackamasBookExchange"
                                           }
                                           target="_blank"
                                           rel="noopener noreferrer"

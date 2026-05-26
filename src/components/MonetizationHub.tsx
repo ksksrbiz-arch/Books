@@ -6,7 +6,6 @@ import {
   Skull,
   Sparkles,
   ExternalLink,
-  Bookmark,
   Check,
   Plus,
   Loader2,
@@ -40,7 +39,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=600",
       synopsis: "Two rival literary agents find themselves in the same small North Carolina town, forcing them to confront the stories they write for themselves.",
       whyTbrFits: "For those who savored the sharp wits and tender tension of our 'Rose & Rapture' endings. A tribute to modern bookstore chemistry.",
-      bookshopLink: "https://bookshop.org/search?keywords=Emily+Henry+Book+Lovers",
+      bookshopLink: "https://bookshop.org/search?keywords=Emily+Henry+Book+Lovers&referrer=ClackamasBookExchange",
       price: "$16.99"
     },
     {
@@ -50,7 +49,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&q=80&w=600",
       synopsis: "A free-spirited astrologer and a calculated actuary are forced into a fake date scenario, leading to celestial alignment of hearts.",
       whyTbrFits: "Echoes the fate dynamics and zodiac compatibility parameters of our celestial branching choices.",
-      bookshopLink: "https://bookshop.org/search?keywords=Written+in+the+Stars+Alexandria+Bellefleur",
+      bookshopLink: "https://bookshop.org/search?keywords=Written+in+the+Stars+Alexandria+Bellefleur&referrer=ClackamasBookExchange",
       price: "$15.99"
     },
     {
@@ -60,7 +59,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1474932430478-367dbb6832c1?auto=format&fit=crop&q=80&w=600",
       synopsis: "A thrilling, profound, and lyrical reimagining of the Iliad, centering on the deep bond between Achilles and Patroclus.",
       whyTbrFits: "Matches the high-fidelity storytelling and heart-rending sacrifice choices found in our tragedy endings.",
-      bookshopLink: "https://bookshop.org/search?keywords=The+Song+of+Achilles+Madeline+Miller",
+      bookshopLink: "https://bookshop.org/search?keywords=The+Song+of+Achilles+Madeline+Miller&referrer=ClackamasBookExchange",
       price: "$17.99"
     }
   ],
@@ -72,7 +71,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1506880018603-83d5b814b5a6?auto=format&fit=crop&q=80&w=600",
       synopsis: "Private eye Philip Marlowe enters a web of blackmail, syndicate violence, and high-society sins in rain-slicked California.",
       whyTbrFits: "The prime template for 'True Crime Noir'. If you preferred the rain-soaked streets and cold street lamps of our neon detective sifting.",
-      bookshopLink: "https://bookshop.org/search?keywords=Raymond+Chandler+The+Big+Sleep",
+      bookshopLink: "https://bookshop.org/search?keywords=Raymond+Chandler+The+Big+Sleep&referrer=ClackamasBookExchange",
       price: "$14.95"
     },
     {
@@ -82,7 +81,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&q=80&w=600",
       synopsis: "A washed-up computer hacker in Tokyo is hired by a mysterious colonel to extract a synthetic memory matrix from orbital vaults.",
       whyTbrFits: "If our synthetic memory smuggler or lower cyber-district timeline captured your focus, read the bible of cyberpunk.",
-      bookshopLink: "https://bookshop.org/search?keywords=Neuromancer+William+Gibson",
+      bookshopLink: "https://bookshop.org/search?keywords=Neuromancer+William+Gibson&referrer=ClackamasBookExchange",
       price: "$16.00"
     },
     {
@@ -92,7 +91,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1541963463532-d68292c34b19?auto=format&fit=crop&q=80&w=600",
       synopsis: "A famous painter shoots her husband five times and never speaks another word. A criminal psychotherapist becomes obsessed with unlocking her secret.",
       whyTbrFits: "Perfect for investigators who prefer methodical profile extraction, motives, and character psyche parsing.",
-      bookshopLink: "https://bookshop.org/search?keywords=The+Silent+Patient+Alex+Michaelides",
+      bookshopLink: "https://bookshop.org/search?keywords=The+Silent+Patient+Alex+Michaelides&referrer=ClackamasBookExchange",
       price: "$17.99"
     }
   ],
@@ -104,7 +103,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1518376186638-27b99b53112a?auto=format&fit=crop&q=80&w=600",
       synopsis: "A man returns to his childhood home and remembers a terrifying supernatural event involving ancient forces lurking in the farm pond.",
       whyTbrFits: "Echoes the oceanic lullabies and bioluminescent seawater runes from the 'Sunken Spindle' timeline.",
-      bookshopLink: "https://bookshop.org/search?keywords=The+Ocean+at+the+End+of+the+Lane+Neil+Gaiman",
+      bookshopLink: "https://bookshop.org/search?keywords=The+Ocean+at+the+End+of+the+Lane+Neil+Gaiman&referrer=ClackamasBookExchange",
       price: "$16.99"
     },
     {
@@ -114,7 +113,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1509021436665-8f07dbf5bf1d?auto=format&fit=crop&q=80&w=600",
       synopsis: "A young family moves into a small home on Ash Tree Lane, only to discover that the interior is inexplicably larger than the exterior.",
       whyTbrFits: "For readers haunted by the grimoire, spatial anomalies, and occult structural recursion.",
-      bookshopLink: "https://bookshop.org/search?keywords=House+of+Leaves+Danielewski",
+      bookshopLink: "https://bookshop.org/search?keywords=House+of+Leaves+Danielewski&referrer=ClackamasBookExchange",
       price: "$24.99"
     },
     {
@@ -124,7 +123,7 @@ const GENRE_RECOMMENDATIONS: Record<string, BookRecommendation[]> = {
       coverUrl: "https://images.unsplash.com/photo-1509248961158-e54f6934749c?auto=format&fit=crop&q=80&w=600",
       synopsis: "Four explorers arrive at a notorious gothic mansion, seeking clinical proof of paranormal phenomena, only to be absorbed by its hunger.",
       whyTbrFits: "For those who took the solitary path of the oracle, listening to whispers in the timber and cold wood floors.",
-      bookshopLink: "https://bookshop.org/search?keywords=The+Haunting+of+Hill+House+Shirley+Jackson",
+      bookshopLink: "https://bookshop.org/search?keywords=The+Haunting+of+Hill+House+Shirley+Jackson&referrer=ClackamasBookExchange",
       price: "$15.00"
     }
   ]
@@ -316,9 +315,24 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
         <div className="flex flex-col items-stretch sm:items-start shrink-0 text-[10px] text-white/40 font-mono space-y-1">
           <div className="flex items-center gap-1.5 text-amber-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Affiliate Revenue Active</span>
+            <a
+              href="https://bookshop.org/shop/ClackamasBookExchange"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:underline transition-all cursor-pointer font-bold duration-200"
+            >
+              Affiliate Revenue Active
+            </a>
           </div>
-          <span>10% Bookshop.org Commission Goes to TBR</span>
+          <a
+            href="https://bookshop.org/shop/ClackamasBookExchange"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-amber-400 font-bold transition-all hover:underline cursor-pointer flex items-center gap-1"
+          >
+            <span>10% Bookshop.org Commission Goes to TBR</span>
+            <ExternalLink className="w-2.5 h-2.5" />
+          </a>
         </div>
       </div>
 
@@ -469,27 +483,6 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
                 ))}
               </div>
 
-              {/* Physical Bookstore Tie-In Promo Code representation */}
-              <div className="p-6 rounded-[2rem] bg-[#0E121E] border border-white/5 flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden">
-                <div className="absolute -left-12 top-0 w-32 h-32 bg-amber-500/5 blur-3xl rounded-full" />
-                <div className="flex items-center gap-4 relative z-10 text-left">
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl hidden sm:block">
-                    <Bookmark className="w-5 h-5 text-amber-400" />
-                  </div>
-                  <div>
-                    <h5 className="text-sm font-semibold text-white font-mono uppercase tracking-wider">
-                      Oregon Storefront Exclusive Invitation
-                    </h5>
-                    <p className="text-xs text-white/50 font-light mt-0.5">
-                      Show this active digital screen to any associate in our physical store for <strong className="text-amber-400">10% OFF</strong> your next trade-in valuation!
-                    </p>
-                  </div>
-                </div>
-                <div className="px-5 py-3 rounded-2xl bg-white/5 border border-dashed border-white/20 font-mono tracking-widest text-center shrink-0">
-                  <span className="text-[9px] text-white/30 uppercase block font-bold mb-0.5">Your Promo Code</span>
-                  <span className="text-sm font-black text-white uppercase tracking-[0.25em]">ECHO-CHOICE-1981</span>
-                </div>
-              </div>
             </motion.div>
           )}
 
@@ -901,7 +894,40 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-2">
+                {/* Bookshop Storefront Affiliate Card */}
+                <div className="p-6 rounded-3xl bg-[#090C12] border border-amber-500/10 flex flex-col justify-between space-y-6 relative overflow-hidden">
+                  <div className="space-y-4">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[8px] text-amber-400 font-mono uppercase tracking-wider font-extrabold pb-0.5">
+                      Shop Online & Support Us
+                    </span>
+                    <h5 className="text-base font-serif font-semibold text-white tracking-tight">
+                      Clackamas Book Exchange Bookstore
+                    </h5>
+                    <p className="text-xs text-white/50 leading-relaxed font-light">
+                      Visit our digital shelf interface on Bookshop.org. Buy any physical book print or ebook and we receive 10% of the proceeds to fund our curation servers!
+                    </p>
+
+                    <div className="p-3 bg-amber-500/[0.02] border border-amber-500/10 rounded-xl flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                      <span className="text-[9px] font-mono text-amber-200 uppercase tracking-wider">
+                        10% Affiliate Commission Goes To TBR
+                      </span>
+                    </div>
+                  </div>
+
+                  <a
+                    id="visit-bookshop-storefront"
+                    href="https://bookshop.org/shop/ClackamasBookExchange"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2 px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-mono font-bold uppercase tracking-wider text-[10px] rounded-xl transition-all cursor-pointer text-center flex items-center justify-center gap-1.5"
+                  >
+                    <span>Visit Our Bookshop.org Store</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+
                 {/* Coffee Donation */}
                 <div className="p-6 rounded-3xl bg-[#090C12] border border-emerald-500/10 flex flex-col justify-between space-y-6 relative overflow-hidden">
                   <div className="space-y-4">
