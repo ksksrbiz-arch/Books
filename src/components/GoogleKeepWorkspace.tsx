@@ -83,6 +83,7 @@ interface GoogleKeepWorkspaceProps {
   onClose: () => void;
   genre: string | null;
   onJumpToScene?: (sceneTitle: string) => void;
+  triggerNotification?: (msg: string) => void;
 }
 
 export function GoogleKeepWorkspace({
@@ -90,7 +91,8 @@ export function GoogleKeepWorkspace({
   currentNode,
   onClose,
   genre,
-  onJumpToScene
+  onJumpToScene,
+  triggerNotification
 }: GoogleKeepWorkspaceProps) {
   const [seedingLoading, setSeedingLoading] = useState(false);
   const [notes, setNotes] = useState<CreativeNote[]>([]);
@@ -176,7 +178,9 @@ export function GoogleKeepWorkspace({
       }
     } catch (e) {
       console.error("Starter seeding error:", e);
-      alert("Seeding creative starter notes failed: " + String(e));
+      if (triggerNotification) {
+        triggerNotification("Seeding creative starter notes failed: " + String(e));
+      }
     } finally {
       setSeedingLoading(false);
     }

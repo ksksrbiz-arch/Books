@@ -407,7 +407,7 @@ export function CodexLoreGlossary({
       {/* Primary Layout Controls */}
       <div className="p-4 md:p-6 bg-current/[0.02] border-b border-current/10 flex flex-col md:flex-row gap-4 items-center justify-between">
         {/* Tab Filters */}
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex overflow-x-auto no-scrollbar flex-nowrap md:flex-wrap gap-2 w-full pb-2 md:pb-0 scroll-smooth shrink-0 md:w-auto">
           {[
             { id: "all", label: "All Records" },
             { id: "character", label: "👥 Characters" },
@@ -424,7 +424,7 @@ export function CodexLoreGlossary({
                 setActiveTab(tab.id);
                 setIsCreating(false);
               }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
                 activeTab === tab.id
                   ? themeConfig.tabStyle.active
                   : themeConfig.tabStyle.inactive

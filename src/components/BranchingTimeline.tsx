@@ -134,6 +134,57 @@ export function BranchingTimeline({
   // --- Map Modes & Custom Diagnostics states ---
   const [mapMode, setMapMode] = useState<"tree" | "comparison" | "convergence">("tree");
 
+  // Custom Zoom Scale state for mobile-responsive canvas mapping
+  const [timelineScale, setTimelineScale] = useState(1.0);
+  
+  // Custom interactive click-and-drag panning container state
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+  const [canvasStartX, setCanvasStartX] = useState(0);
+  const [canvasScrollLeft, setCanvasScrollLeft] = useState(0);
+
+  // Custom premium interactive confirmation modal overlay state (replaces native window.confirm)
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Initialize scale responsively on small screens
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (window.innerWidth < 640) {
+        setTimelineScale(0.75);
+      } else if (window.innerWidth < 1024) {
+        setTimelineScale(0.9);
+      }
+    }
+  }, []);
+
+  // Mouse pan handlers for enhanced accessibility grid
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (!canvasContainerRef.current) return;
+    // Don't drag if clicking buttons maps or interactive nodes
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest(".cursor-pointer")) return;
+    
+    setIsDraggingCanvas(true);
+    setCanvasStartX(e.pageX - canvasContainerRef.current.offsetLeft);
+    setCanvasScrollLeft(canvasContainerRef.current.scrollLeft);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingCanvas || !canvasContainerRef.current) return;
+    e.preventDefault();
+    const x = e.pageX - canvasContainerRef.current.offsetLeft;
+    const walk = (x - canvasStartX) * 1.5; // speed factor
+    canvasContainerRef.current.scrollLeft = canvasScrollLeft - walk;
+  };
+
+  const handleCanvasMouseUpOrLeave = () => {
+    setIsDraggingCanvas(false);
+  };
+
   // Comparison workbench tracking state slots (stores node index numbers)
   const [compareIdxA, setCompareIdxA] = useState<number | null>(null);
   const [compareIdxB, setCompareIdxB] = useState<number | null>(null);
@@ -277,24 +328,25 @@ export function BranchingTimeline({
   // Master Restore Trigger Warp (works for any snapshot reality) 
   const handleRestoreState = (snapshot: { name?: string; playerNote?: string; steps: StepNode[] | any[]; relationships: any; consequences: Record<string, string>; storyMilestones: string[] }) => {
     const titleLabel = snapshot.name || snapshot.playerNote || "Alternate Reality";
-    const confirmWarp = window.confirm(
-      `Travel to alternate reality stream: "${titleLabel}"?\n\nThis will restore this exact path snapshot into the universe. Subsequent steps are safely stored inside this save file, but your present view will reload.`
-    );
-    if (confirmWarp) {
-      // Re-pack state into standard SavedReality framework structure and store for restoration
-      const payload = {
-        id: `warp_${Date.now()}`,
-        name: titleLabel,
-        steps: snapshot.steps || (snapshot as any).stepsSnapshot,
-        relationships: snapshot.relationships || (snapshot as any).relationshipsSnapshot,
-        consequences: snapshot.consequences || (snapshot as any).consequencesSnapshot,
-        storyMilestones: snapshot.storyMilestones || (snapshot as any).storyMilestonesSnapshot,
-        timestamp: Date.now()
-      };
-      
-      localStorage.setItem(`echoes_restore_trigger_${currentStoryId}`, JSON.stringify(payload));
-      window.location.reload(); 
-    }
+    setConfirmAction({
+      title: "Warp Reality Stream",
+      message: `Travel to alternate reality stream: "${titleLabel}"?\n\nThis will restore this exact path snapshot into the universe. Subsequent steps are safely stored inside this save file, but your present view will reload.`,
+      onConfirm: () => {
+        // Re-pack state into standard SavedReality framework structure and store for restoration
+        const payload = {
+          id: `warp_${Date.now()}`,
+          name: titleLabel,
+          steps: snapshot.steps || (snapshot as any).stepsSnapshot,
+          relationships: snapshot.relationships || (snapshot as any).relationshipsSnapshot,
+          consequences: snapshot.consequences || (snapshot as any).consequencesSnapshot,
+          storyMilestones: snapshot.storyMilestones || (snapshot as any).storyMilestonesSnapshot,
+          timestamp: Date.now()
+        };
+        
+        localStorage.setItem(`echoes_restore_trigger_${currentStoryId}`, JSON.stringify(payload));
+        window.location.reload(); 
+      }
+    });
   };
 
   const handleDeleteReality = (id: string, e: React.MouseEvent) => {
@@ -629,7 +681,7 @@ export function BranchingTimeline({
           {/* SUBTAB VIEW 1: FLOW TREE TIMELINE (WITH RADIANTS PATH HIGHLIGHTS) */}
           {/* ========================================== */}
           {mapMode === "tree" && (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center p-4 rounded-2xl bg-black/20 border border-white/5 gap-3">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
@@ -645,10 +697,47 @@ export function BranchingTimeline({
                 </button>
               </div>
 
+              {/* Premium Neural Canvas Control Bar */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3.5 bg-black/30 border border-white/5 rounded-2xl gap-3 text-xs">
+                <div className="flex items-center gap-2 text-zinc-400 select-none">
+                  <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Timeline Zoom Scale: <strong className="text-white font-mono">{Math.round(timelineScale * 100)}%</strong></span>
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto select-none">
+                  {[0.7, 0.85, 1.0, 1.15].map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => setTimelineScale(level)}
+                      className={`px-3.5 py-2 rounded-xl text-[10px] font-mono font-bold transition duration-200 cursor-pointer ${
+                        timelineScale === level
+                          ? "bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/10"
+                          : "bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/5"
+                      }`}
+                      style={{ minWidth: "46px" }}
+                    >
+                      {level * 100}%
+                    </button>
+                  ))}
+                  <div className="h-4 w-[1px] bg-white/10 mx-1 hidden sm:block" />
+                  <span className="text-[10px] font-mono text-zinc-500 hidden sm:inline">Drag canvas or swipe to pan timeline</span>
+                </div>
+              </div>
+
               {/* Interactive Graph Drawing Canvas Grid */}
-              <div className="relative w-full overflow-x-auto overflow-y-visible border border-white/5 rounded-3xl bg-black/40 p-12 min-h-[500px]">
+              <div
+                ref={canvasContainerRef}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={handleCanvasMouseUpOrLeave}
+                onMouseLeave={handleCanvasMouseUpOrLeave}
+                className="relative w-full overflow-x-auto overflow-y-visible border border-white/5 rounded-3xl bg-black/40 p-4 sm:p-12 min-h-[500px] select-none cursor-grab active:cursor-grabbing touch-pan-x"
+              >
                 {/* Main scroll wrapper sizing container */}
-                <div className="flex flex-col items-center gap-16 min-w-[700px] relative">
+                <div 
+                  className="flex flex-col items-center gap-16 min-w-[700px] relative transition-transform duration-300 origin-top"
+                  style={{ transform: `scale(${timelineScale})`, transformOrigin: "top center" }}
+                >
                   
                   {/* Dynamic Connecting SVG curves overlay in background with path tracing neon lights */}
                   <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
@@ -900,14 +989,15 @@ export function BranchingTimeline({
                         <button
                           onClick={() => {
                             const idx = selectedGraphNode.idx;
-                            const confirmFork = window.confirm(
-                              `Warp back and rewrite history here? All decisions from step ${idx + 2} will be pruned from this timeline.`
-                            );
-                            if (confirmFork) {
-                              onBranchToStep(idx);
-                              setSelectedGraphNode(null);
-                              triggerToast("⌛ Fate timeline adjusted back! Parallel path ready.");
-                            }
+                            setConfirmAction({
+                              title: "Rewrite History",
+                              message: `Warp back and rewrite history here? All decisions from step ${idx + 2} will be pruned from this timeline.`,
+                              onConfirm: () => {
+                                onBranchToStep(idx);
+                                setSelectedGraphNode(null);
+                                triggerToast("⌛ Fate timeline adjusted back! Parallel path ready.");
+                              }
+                            });
                           }}
                           className={`flex-1 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition flex items-center justify-center gap-2 ${config.accentBg}`}
                         >
@@ -917,14 +1007,15 @@ export function BranchingTimeline({
                         <button
                           onClick={() => {
                             const rootParentIdx = selectedGraphNode.parentIndex!;
-                            const confirmAlternate = window.confirm(
-                              `Warp back to the decision split in Scene ${rootParentIdx + 1}?\n\nThis will load that exact moment, allowing you to instantly select "${selectedGraphNode.choiceText}" and watch alternative outcomes unfold.`
-                            );
-                            if (confirmAlternate) {
-                              onBranchToStep(rootParentIdx);
-                              setSelectedGraphNode(null);
-                              triggerToast(`Warped! Make the split choice: "${selectedGraphNode.choiceText}"`);
-                            }
+                            setConfirmAction({
+                              title: "Travel Back to Splitting Junction",
+                              message: `Warp back to the decision split in Scene ${rootParentIdx + 1}?\n\nThis will load that exact moment, allowing you to instantly select "${selectedGraphNode.choiceText}" and watch alternative outcomes unfold.`,
+                              onConfirm: () => {
+                                onBranchToStep(rootParentIdx);
+                                setSelectedGraphNode(null);
+                                triggerToast(`Warped! Make the split choice: "${selectedGraphNode.choiceText}"`);
+                              }
+                            });
                           }}
                           className="flex-1 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest bg-orange-600 hover:bg-orange-700 text-white transition flex items-center justify-center gap-2"
                         >
@@ -1072,13 +1163,14 @@ export function BranchingTimeline({
                         <div className="pt-6">
                           <button
                             onClick={() => {
-                              const confirmRestore = window.confirm(
-                                `Instant teleport step warp: teleport back to Scenario Index ${idx + 1}? Alternate branches from this moment will unfold.`
-                              );
-                              if (confirmRestore) {
-                                onBranchToStep(idx);
-                                triggerToast(`Fate timeline adjusted to Scene Match Index ${idx + 1}!`);
-                              }
+                              setConfirmAction({
+                                title: "Instant Teleport Warp",
+                                message: `Instant teleport step warp: teleport back to Scenario Index ${idx + 1}? Alternate branches from this moment will unfold.`,
+                                onConfirm: () => {
+                                  onBranchToStep(idx);
+                                  triggerToast(`Fate timeline adjusted to Scene Match Index ${idx + 1}!`);
+                                }
+                              });
                             }}
                             className={`w-full py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition flex items-center justify-center gap-1.5 ${config.accentBg}`}
                           >
@@ -1484,17 +1576,18 @@ export function BranchingTimeline({
                         <div className="pt-1 select-none">
                           <button
                             onClick={() => {
-                              const confirmWarp = window.confirm(
-                                `Warp Back and branch timeline here?\n\nThis will return you back to step ${originalIndex + 1}. Future steps up to step ${allSteps.length} will be pruned in your active universe, letting you decide differently.`
-                              );
-                              if (confirmWarp) {
-                                onBranchToStep(originalIndex);
-                                triggerToast("⌛ Warp complete! Timeline adjusted back.");
-                              }
+                              setConfirmAction({
+                                title: "Warp and Branch Timeline",
+                                message: `Warp Back and branch timeline here?\n\nThis will return you back to step ${originalIndex + 1}. Future steps up to step ${allSteps.length} will be pruned in your active universe, letting you decide differently.`,
+                                onConfirm: () => {
+                                  onBranchToStep(originalIndex);
+                                  triggerToast("⌛ Warp complete! Timeline adjusted back.");
+                                }
+                              });
                             }}
                             className={`py-1.5 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition ${config.accentBg}`}
                           >
-                            <RotateCcw className="w-3 h-3" /> Warp Fate Here
+                            <RotateCcw className="w-3 h-3" strokeWidth="2.5" /> Warp Fate Here
                           </button>
                         </div>
                       )}
@@ -2067,6 +2160,67 @@ export function BranchingTimeline({
                   className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${config.accentBg}`}
                 >
                   Confirm Bookmark
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================== */}
+      {/* DIALOG 3: CUSTOM CONFIRMATION OVERLAY (IMMERSIVE MULTI-STAGE) */}
+      {/* ========================================== */}
+      <AnimatePresence>
+        {confirmAction && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 backdrop-blur-3xl bg-black/85">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className={`w-full max-w-md p-6 md:p-8 rounded-[2.5rem] border shadow-2xl relative ${
+                genre === "romance" ? "bg-[#FAF5F5] text-rose-950 border-rose-200" : "bg-zinc-950 text-white border-white/10"
+              }`}
+            >
+              <button
+                onClick={() => setConfirmAction(null)}
+                className="absolute top-6 right-6 p-2 rounded-full border border-current/10 hover:bg-current/10 transition flex items-center justify-center cursor-pointer"
+                title="Cancel"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-4 mt-2">
+                <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-500">
+                  <AlertCircle className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-[9px] font-mono uppercase tracking-[0.1em] text-zinc-500">Timeline Decision Link</h4>
+                  <h3 className="text-md font-black leading-tight uppercase tracking-wider">{confirmAction.title}</h3>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-black/40 border border-white/5 mb-6 text-xs leading-relaxed text-zinc-300">
+                <p className="font-serif italic whitespace-pre-wrap">{confirmAction.message}</p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmAction(null)}
+                  className={`flex-1 py-3 border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                    genre === "romance" ? "border-rose-100 text-rose-800 hover:bg-rose-50" : "border-white/10 text-zinc-300 hover:text-white"
+                  }`}
+                >
+                  Abort Warp
+                </button>
+                <button
+                  onClick={() => {
+                    confirmAction.onConfirm();
+                    setConfirmAction(null);
+                  }}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${config.accentBg} flex items-center justify-center gap-1.5`}
+                >
+                  <Zap className="w-3.5 h-3.5 text-black" /> Confirm Decision
                 </button>
               </div>
             </motion.div>
