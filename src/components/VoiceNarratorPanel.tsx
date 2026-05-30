@@ -26,6 +26,7 @@ interface VoiceNarratorPanelProps {
   relationships: any;
   settings: any;
   setSettings: React.Dispatch<React.SetStateAction<any>>;
+  triggerNotification?: (msg: string, title?: string, type?: "success" | "error" | "info") => void;
 }
 
 interface ChatMessage {
@@ -41,7 +42,8 @@ export function VoiceNarratorPanel({
   genre,
   relationships,
   settings,
-  setSettings
+  setSettings,
+  triggerNotification
 }: VoiceNarratorPanelProps) {
   // Premium and Free Voice States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -161,7 +163,11 @@ export function VoiceNarratorPanel({
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
-      alert("Speech recognition is not supported in this browser. Please type your message.");
+      if (triggerNotification) {
+        triggerNotification("Speech recognition is not supported in this browser. Please type your message.", "Auditory Module Offline", "info");
+      } else {
+        alert("Speech recognition is not supported in this browser. Please type your message.");
+      }
       return;
     }
 

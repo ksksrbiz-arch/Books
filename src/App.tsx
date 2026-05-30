@@ -52,6 +52,7 @@ import {
   Search,
   ArrowDownAZ,
   Coins,
+  Image as ImageIcon,
 } from "lucide-react";
 import {
   auth,
@@ -101,6 +102,7 @@ import { BranchingTimeline } from "./components/BranchingTimeline";
 import { GoogleKeepWorkspace } from "./components/GoogleKeepWorkspace";
 import { CodexLoreGlossary } from "./components/CodexLoreGlossary";
 import { VoiceNarratorPanel } from "./components/VoiceNarratorPanel";
+import { SnapshotGallery } from "./components/SnapshotGallery";
 import { AtmosphericFateLoader } from "./components/AtmosphericFateLoader";
 import { BookOpen } from "lucide-react";
 import { MonetizationHub } from "./components/MonetizationHub";
@@ -128,7 +130,8 @@ import {
   uploadImageToStorage,
   deleteStepImageFromStorage,
   cleanupOrphanedStorageImages,
-  cleanupAllStoryImagesFromStorage
+  cleanupAllStoryImagesFromStorage,
+  healOnlineConnection,
 } from "./lib/firebase";
 import { exportToGoogleDocs } from "./lib/googleDocs";
 
@@ -346,6 +349,7 @@ function App() {
   const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showSnapshotGallery, setShowSnapshotGallery] = useState(false);
   const [showMonetization, setShowMonetization] = useState(false);
   const [showKeepNotes, setShowKeepNotes] = useState(false);
   const [showCodex, setShowCodex] = useState(false);
@@ -615,6 +619,19 @@ function App() {
     Record<string, { affinity: number; suspicion: number }>
   >({});
   const [npcUpdateNotifs, setNpcUpdateNotifs] = useState<any[]>([]);
+
+  const triggerNotification = (message: string, title = "System Update", type: "success" | "error" | "info" = "info") => {
+    setNpcUpdateNotifs((prev) => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        name: title,
+        reason: message,
+        isSystem: true,
+        systemType: type,
+      },
+    ]);
+  };
   const [storyMilestones, setStoryMilestones] = useState<string[]>([]);
   const [consequences, setConsequences] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState({
@@ -957,7 +974,7 @@ function App() {
         discoveredAt: new Date().toISOString()
       });
 
-      alert(`Successfully inscribed selected text into Codex under "${category.toUpperCase()}"!`);
+      triggerNotification(`Successfully inscribed selected text into Codex under "${category.toUpperCase()}"!`, "Codex Inscription", "success");
       
       window.getSelection()?.removeAllRanges();
       setSelectedText("");
@@ -992,7 +1009,7 @@ function App() {
         updatedAt: serverTimestamp()
       });
 
-      alert("Successfully added selection as reference note on Keep Board!");
+      triggerNotification("Successfully added selection as reference note on Keep Board!", "Reference Saved", "success");
       
       window.getSelection()?.removeAllRanges();
       setSelectedText("");
@@ -2052,7 +2069,7 @@ function App() {
   // Compile and Export Bookstore-Quality Print Google Doc
   const handleExportGoogleDoc = async () => {
     if (!currentNode) {
-      alert("No active storyline available to compile.");
+      triggerNotification("No active storyline available to compile.", "Compile Failed", "error");
       return;
     }
     
@@ -2972,26 +2989,39 @@ function App() {
             initial={{ opacity: 0, y: -40, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            className="fixed top-6 right-6 z-[1000] flex items-center gap-2 px-4 py-2.5 rounded-full shadow-lg border backdrop-blur-md"
+            className="fixed top-6 right-6 z-[1000] flex items-center gap-3 px-4 py-2.5 rounded-full shadow-2xl border backdrop-blur-md"
             style={{
-              backgroundColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
-              borderColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.3)" : "rgba(16, 185, 129, 0.3)",
-              color: syncStatus.status === "offline_active" ? "#ef4444" : "#10b981",
+              backgroundColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.2)",
+              borderColor: syncStatus.status === "offline_active" ? "rgba(239, 68, 68, 0.4)" : "rgba(16, 185, 129, 0.4)",
+              color: syncStatus.status === "offline_active" ? "#fca5a5" : "#6ee7b7",
             }}
           >
             {syncStatus.status === "offline_active" ? (
-              <span className="relative flex h-2 w-2">
+              <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
               </span>
             ) : (
-              <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
             )}
-            <span className="text-xs font-mono font-medium tracking-wide">
+            <span className="text-[10px] sm:text-xs font-mono font-extrabold uppercase tracking-widest leading-none select-none">
               {syncStatus.message}
             </span>
+            {syncStatus.status === "offline_active" && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setSyncStatus({ status: "syncing", message: "Activating dynamic online healers..." });
+                  await healOnlineConnection();
+                }}
+                className="px-2.5 py-1 text-[9px] font-mono tracking-widest font-black uppercase rounded-full bg-red-500 text-slate-950 hover:bg-white hover:text-slate-950 transition-all cursor-pointer shadow-md duration-300 transform active:scale-95"
+                title="Bypass simulated server outages instantly and restore normal direct operation"
+              >
+                Heal Link
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -3467,12 +3497,32 @@ function App() {
                     Previous and active narratives
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowLibrary(false)}
-                  className={`p-2 rounded-full transition-colors ${genre === "romance" ? "hover:bg-rose-50" : "hover:bg-white/5"}`}
-                >
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-3">
+                  {currentStoryId && (
+                    <button
+                      id="view-snapshot-gallery-btn"
+                      onClick={() => {
+                        setShowLibrary(false);
+                        setShowSnapshotGallery(true);
+                      }}
+                      className={`px-4 py-2 text-[10px] uppercase font-mono font-black tracking-widest flex items-center gap-2 border rounded-xl transition-all cursor-pointer ${
+                        genre === "romance"
+                          ? "bg-rose-100/50 border-rose-200 text-rose-800 hover:bg-rose-200/60"
+                          : "bg-amber-500/10 border-amber-500/25 text-amber-400 hover:bg-amber-500/20"
+                      }`}
+                      title="View active narrative image memories"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>Snapshot Vault</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowLibrary(false)}
+                    className={`p-2 rounded-full transition-colors ${genre === "romance" ? "hover:bg-rose-50" : "hover:bg-white/5"}`}
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Sorting and Filtering HUD Controls */}
@@ -3538,9 +3588,11 @@ function App() {
                       <History className="w-3.5 h-3.5" />
                       <span>Last Played</span>
                       {librarySortBy === "lastPlayed" && (
-                        <span className="text-[9px] opacity-80">
-                          {librarySortOrder === "desc" ? "▼" : "▲"}
-                        </span>
+                        <ChevronDown 
+                          className={`w-3.5 h-3.5 transition-transform duration-300 ${
+                            librarySortOrder === "asc" ? "rotate-180" : ""
+                          }`}
+                        />
                       )}
                     </button>
 
@@ -3566,9 +3618,11 @@ function App() {
                       <Book className="w-3.5 h-3.5" />
                       <span>Genre</span>
                       {librarySortBy === "genre" && (
-                        <span className="text-[9px] opacity-80">
-                          {librarySortOrder === "desc" ? "▼" : "▲"}
-                        </span>
+                        <ChevronDown 
+                          className={`w-3.5 h-3.5 transition-transform duration-300 ${
+                            librarySortOrder === "asc" ? "rotate-180" : ""
+                          }`}
+                        />
                       )}
                     </button>
 
@@ -3594,9 +3648,11 @@ function App() {
                       <ArrowDownAZ className="w-3.5 h-3.5" />
                       <span>Alphabetical</span>
                       {librarySortBy === "alphabetical" && (
-                        <span className="text-[9px] opacity-80">
-                          {librarySortOrder === "desc" ? "▼" : "▲"}
-                        </span>
+                        <ChevronDown 
+                          className={`w-3.5 h-3.5 transition-transform duration-300 ${
+                            librarySortOrder === "asc" ? "rotate-180" : ""
+                          }`}
+                        />
                       )}
                     </button>
                   </div>
@@ -3683,6 +3739,25 @@ function App() {
                               >
                                 {story.status}
                               </span>
+                              
+                              {story.id === currentStoryId && (
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowLibrary(false);
+                                    setShowSnapshotGallery(true);
+                                  }}
+                                  className={`inline-flex items-center gap-1 text-[9px] uppercase font-bold font-mono px-2 py-0.5 rounded-md border cursor-pointer hover:scale-105 transition-all ${
+                                    genre === "romance"
+                                      ? "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100"
+                                      : "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
+                                  }`}
+                                  title="Open generated image snapshots"
+                                >
+                                  <ImageIcon className="w-3.5 h-3.5" />
+                                  <span>Snapshots</span>
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3750,10 +3825,42 @@ function App() {
               onClose={() => setShowKeepNotes(false)}
               genre={genre}
               onJumpToScene={handleJumpToScene}
+              triggerNotification={triggerNotification}
             />
           </div>
         </div>
       )}
+
+      {/* Snapshot Gallery Memory Modal */}
+      {showSnapshotGallery && currentStoryId && (() => {
+        const activeStory = userStories.find(s => s.id === currentStoryId);
+        const storyTitle = activeStory ? (activeStory.characterArchetype || "Active Fate") : "Active Fate";
+        
+        // Filter out steps with generated image URLs
+        const activeSnapshots = allSteps
+          .filter((step: any) => step.imageUrl)
+          .map((step: any) => ({
+            id: step.id,
+            sceneTitle: step.sceneTitle || "Untitled Scene",
+            sceneDescription: step.sceneDescription || "",
+            imageUrl: step.imageUrl,
+            imagePrompt: step.imagePrompt || "",
+            mood: step.mood,
+            intensity: step.intensity,
+          }));
+
+        return (
+          <SnapshotGallery
+            currentStoryId={currentStoryId}
+            storyTitle={storyTitle}
+            genre={genre}
+            snapshots={activeSnapshots}
+            onClose={() => setShowSnapshotGallery(false)}
+            triggerNotification={triggerNotification}
+            onJumpToScene={handleJumpToScene}
+          />
+        );
+      })()}
 
       {/* Persistent Codex & Lore Glossary Modal */}
       {showMonetization && (
@@ -6230,6 +6337,7 @@ function App() {
                               relationships={relationships}
                               settings={settings}
                               setSettings={setSettings}
+                              triggerNotification={triggerNotification}
                             />
                           </div>
                         )}
@@ -7699,7 +7807,7 @@ function App() {
                             <button
                               onClick={() => {
                                 navigator.clipboard.writeText(sharedLink);
-                                alert("Link Copied!");
+                                triggerNotification("Link Copied to Clipboard!", "Success", "success");
                               }}
                               className="px-3 bg-amber-500/20 text-amber-300 rounded border border-amber-500/20 text-[10px] font-black uppercase cursor-pointer"
                             >
@@ -7863,12 +7971,26 @@ function App() {
             >
               <div
                 className={`p-2 rounded-full ${
-                  genre === "romance"
-                    ? "bg-rose-100 text-rose-500"
-                    : "bg-white/10 text-sky-400"
+                  notif.isSystem
+                    ? notif.systemType === "success"
+                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/10"
+                      : notif.systemType === "error"
+                        ? "bg-rose-500/10 text-rose-400 border border-rose-500/10"
+                        : "bg-amber-500/10 text-amber-400 border border-amber-500/10"
+                    : genre === "romance"
+                      ? "bg-rose-100 text-rose-500"
+                      : "bg-white/10 text-sky-400"
                 }`}
               >
-                <Users className="w-4 h-4" />
+                {notif.isSystem ? (
+                  notif.systemType === "success" ? (
+                    <Check className="w-4 h-4" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" />
+                  )
+                ) : (
+                  <Users className="w-4 h-4" />
+                )}
               </div>
               <div className="flex-1 space-y-1">
                 <div className="flex justify-between items-center text-xs font-bold font-mono">
@@ -7879,25 +8001,27 @@ function App() {
                   >
                     {notif.name}
                   </span>
-                  <span
-                    className={`${
-                      notif.relationshipType === "suspicion"
-                        ? notif.affinityChange > 0
-                          ? "text-red-500"
-                          : "text-blue-400"
-                        : notif.affinityChange > 0
-                          ? genre === "romance"
-                            ? "text-rose-500"
-                            : "text-green-500"
-                          : "text-gray-500"
-                    }`}
-                  >
-                    {notif.affinityChange > 0 ? "+" : ""}
-                    {notif.affinityChange}{" "}
-                    {notif.relationshipType === "suspicion"
-                      ? "Suspicion"
-                      : "Affinity"}
-                  </span>
+                  {notif.affinityChange !== undefined && (
+                    <span
+                      className={`${
+                        notif.relationshipType === "suspicion"
+                          ? notif.affinityChange > 0
+                            ? "text-red-500"
+                            : "text-blue-400"
+                          : notif.affinityChange > 0
+                            ? genre === "romance"
+                              ? "text-rose-500"
+                              : "text-green-500"
+                            : "text-gray-500"
+                      }`}
+                    >
+                      {notif.affinityChange > 0 ? "+" : ""}
+                      {notif.affinityChange}{" "}
+                      {notif.relationshipType === "suspicion"
+                        ? "Suspicion"
+                        : "Affinity"}
+                    </span>
+                  )}
                 </div>
                 <p
                   className={`text-xs leading-relaxed ${genre === "romance" ? "text-rose-700" : "text-gray-400"}`}

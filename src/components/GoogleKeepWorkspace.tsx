@@ -358,7 +358,11 @@ export function GoogleKeepWorkspace({
       setIsCreating(false);
     } catch (err) {
       console.error("Failed to save note to Firestore:", err);
-      alert("Error adding note to Firestore: " + String(err));
+      if (triggerNotification) {
+        triggerNotification("Error adding note to Firestore: " + String(err));
+      } else {
+        alert("Error adding note to Firestore: " + String(err));
+      }
     }
   };
 

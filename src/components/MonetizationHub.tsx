@@ -193,7 +193,11 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
   const handleNewsletterSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newsletterEmail || !newsletterEmail.includes("@")) {
-      alert("Please provide a valid email address!");
+      if (triggerNotification) {
+        triggerNotification("Please provide a valid email address!");
+      } else {
+        alert("Please provide a valid email address!");
+      }
       return;
     }
     setSigningUp(true);
@@ -219,7 +223,11 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
   const submitCommissionParameters = (e: React.FormEvent) => {
     e.preventDefault();
     if (!commissionForm.title || !commissionForm.archetype) {
-      alert("Please fill in today's commission title and character archetype!");
+      if (triggerNotification) {
+        triggerNotification("Please fill in today's commission title and character archetype!");
+      } else {
+        alert("Please fill in today's commission title and character archetype!");
+      }
       return;
     }
     setPaymentStep("stripe");
@@ -866,7 +874,14 @@ export function MonetizationHub({ user, activeGenre, onClose, triggerNotificatio
                       $9.99 one-time
                     </span>
                     <button
-                      onClick={() => alert("This bundle can be purchased with TBR points or real support inside Oregon's trade loops!")}
+                      onClick={() => {
+                        const msg = "This bundle can be purchased with TBR points or real support inside Oregon's trade loops!";
+                        if (triggerNotification) {
+                          triggerNotification(msg);
+                        } else {
+                          alert(msg);
+                        }
+                      }}
                       className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[10px] font-mono font-black uppercase tracking-wider transition-all border border-white/10"
                     >
                       Unlock with Trade-In

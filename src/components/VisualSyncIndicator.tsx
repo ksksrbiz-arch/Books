@@ -10,9 +10,11 @@ import {
   ArrowRight,
   Wifi,
   HardDrive,
-  Info
+  Info,
+  Sparkles,
+  Activity,
 } from "lucide-react";
-import { flushOfflineQueueSync } from "../lib/firebase";
+import { flushOfflineQueueSync, healOnlineConnection } from "../lib/firebase";
 
 interface VisualSyncIndicatorProps {
   syncStatus: {
@@ -29,6 +31,8 @@ export function VisualSyncIndicator({ syncStatus, genre }: VisualSyncIndicatorPr
   const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [localLatency, setLocalLatency] = useState<number | undefined>(syncStatus.latency);
+  const [isHealing, setIsHealing] = useState(false);
+  const [healingMessage, setHealingMessage] = useState("");
 
   // Synchronize on compile and interval local storage check
   useEffect(() => {
@@ -71,6 +75,28 @@ export function VisualSyncIndicator({ syncStatus, genre }: VisualSyncIndicatorPr
       console.warn("Manual sync error:", e);
     } finally {
       setIsManualSyncing(false);
+    }
+  };
+
+  const handleHealConnection = async () => {
+    setIsHealing(true);
+    setHealingMessage("Bypassing firewalls & restoring channels...");
+    try {
+      const success = await healOnlineConnection();
+      if (success) {
+        setHealingMessage("Bypass successful! Active stream restored.");
+        setTimeout(() => setHealingMessage(""), 4000);
+      } else {
+        setHealingMessage("Simulated firewall active. Retrying...");
+      }
+      // Update local storage queue count
+      const queue = JSON.parse(localStorage.getItem("offline_echoes_sync") || "[]");
+      setPendingWritesCount(queue.length);
+    } catch (err) {
+      console.warn("Emergency network diagnostic bypass error:", err);
+      setHealingMessage("Diagnose failure. Re-verify interface.");
+    } finally {
+      setIsHealing(false);
     }
   };
 
@@ -133,11 +159,15 @@ export function VisualSyncIndicator({ syncStatus, genre }: VisualSyncIndicatorPr
   const latencyMeter = getLatencyMeter(currentLatency);
 
   return (
-    <div className="relative inline-block" id="tbr-sync-indicator-wrapper">
+    <div 
+      className="relative inline-block rounded-full backdrop-blur-[12px] bg-black/15 border border-white/10 p-[1.5px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.08),0_4px_12px_rgba(0,0,0,0.3)] transition-all duration-300" 
+      id="tbr-sync-indicator-wrapper"
+      style={{ backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+    >
       {/* Trigger pill */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-mono tracking-wider transition-all duration-300 hover:scale-102 cursor-pointer ${statusTheme.bg}`}
+        className={`flex items-center gap-2 px-3 py-1 rounded-full border border-transparent text-[11px] font-mono tracking-wider transition-all duration-300 hover:scale-102 cursor-pointer shadow-[inset_0_1.5px_0_rgba(255,255,255,0.15)] ${statusTheme.bg}`}
         title="Google Cloud Live Sync Status"
         id="sync-status-indicator-pill"
       >
@@ -251,24 +281,74 @@ export function VisualSyncIndicator({ syncStatus, genre }: VisualSyncIndicatorPr
                   </div>
                 )}
 
-                {/* Manual flush CTA button */}
-                <button
-                  onClick={handleManualSync}
-                  disabled={isManualSyncing || pendingWritesCount === 0}
-                  className="w-full py-2 px-3 rounded-xl font-mono font-bold text-[10px] uppercase tracking-widest bg-white/5 hover:bg-white/10 disabled:opacity-40 text-center transition-all flex items-center justify-center gap-2 border border-white/10"
-                >
-                  {isManualSyncing ? (
-                    <>
-                      <RefreshCw className="w-3 h-3 animate-spin text-white" />
-                      <span>Syncing Now...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-3 h-3" />
-                      <span>Force Database Sync</span>
-                    </>
-                  )}
-                </button>
+                {/* Diagnostic Check HUD for active connection troubleshooting */}
+                <div className="space-y-2 border-t border-white/5 pt-3">
+                  <div className="text-[10px] font-mono text-white/40 uppercase tracking-widest font-bold flex items-center gap-1.5">
+                    <Activity className="w-3 h-3 text-sky-400" />
+                    <span>Dynamic Self-Diagnostic</span>
+                  </div>
+
+                  <div className="space-y-1.5 text-[11px] font-mono">
+                    <div className="flex justify-between items-center text-zinc-400">
+                      <span>Physical Interface:</span>
+                      <span className={typeof window !== "undefined" && window.navigator.onLine ? "text-emerald-400" : "text-rose-400"}>
+                        {typeof window !== "undefined" && window.navigator.onLine ? "ONLINE (Active)" : "DISCONNECTED"}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-zinc-400">
+                      <span>Sync Engine Status:</span>
+                      <span className={pendingWritesCount > 0 ? "text-amber-400 animate-pulse" : "text-emerald-400"}>
+                        {pendingWritesCount > 0 ? `${pendingWritesCount} Write(s) Queued` : "All Synced"}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-zinc-400">
+                      <span>Connection Stream:</span>
+                      <span className={syncStatus.status === "offline_active" ? "text-rose-400" : "text-emerald-400 font-bold"}>
+                        {syncStatus.status === "offline_active" ? "Simulated Fallback active" : "Direct Link live"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {healingMessage && (
+                  <div className="text-[10px] font-mono bg-amber-500/10 text-amber-300 p-2 rounded-lg border border-amber-500/20 text-center animate-pulse">
+                    ⚡ {healingMessage}
+                  </div>
+                )}
+
+                {/* Healing & Force Synchronization Buttons Area */}
+                <div className="space-y-2 pt-2">
+                  {syncStatus.status === "offline_active" ? (
+                    <button
+                      onClick={handleHealConnection}
+                      disabled={isHealing}
+                      className="w-full py-2.5 px-3 rounded-xl font-mono font-black text-[10px] uppercase tracking-widest bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-40 text-center transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10 cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 animate-bounce text-slate-950" />
+                      <span>{isHealing ? "Restoring Connection..." : "Heal Network Outage"}</span>
+                    </button>
+                  ) : null}
+
+                  <button
+                    onClick={handleManualSync}
+                    disabled={isManualSyncing || pendingWritesCount === 0}
+                    className="w-full py-2 px-3 rounded-xl font-mono font-bold text-[10px] uppercase tracking-widest bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 text-center transition-all flex items-center justify-center gap-2 border border-white/10 cursor-pointer"
+                  >
+                    {isManualSyncing ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin text-white" />
+                        <span>Force Flushing Local Cache...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Force Sync Queue</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </>
