@@ -1,10 +1,47 @@
 import { initializeApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { initializeFirestore, doc, setDoc, getDoc, collection, addDoc, query, orderBy, getDocs, onSnapshot, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, uploadString, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
-import firebaseConfig from '../../firebase-applet-config.json';
+import fileFirebaseConfig from '../../firebase-applet-config.json';
+
+// Firebase web config: prefer values injected by Vite from VITE_FIREBASE_*
+// environment variables at build time, fall back to the bundled template
+// file (kept blank in version control) for backwards compatibility.
+declare const __FIREBASE_CONFIG__: Record<string, string> | undefined;
+declare const __FIREBASE_APP_CHECK_SITE_KEY__: string | undefined;
+
+const injectedConfig: Record<string, string> =
+  typeof __FIREBASE_CONFIG__ !== 'undefined' && __FIREBASE_CONFIG__ ? __FIREBASE_CONFIG__ : {};
+const firebaseConfig = { ...(fileFirebaseConfig as Record<string, string>), ...injectedConfig };
+
+if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
+  // Don't crash the SPA — Firebase features will simply no-op — but make the
+  // mis-configuration obvious to operators in dev tools.
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[Firebase] Missing projectId / apiKey. Set VITE_FIREBASE_* env vars at build time.'
+  );
+}
 
 const app = initializeApp(firebaseConfig);
+
+// Firebase App Check: prevents unauthorized clients from hammering the
+// backend. Enabled when VITE_FIREBASE_APP_CHECK_SITE_KEY is provided.
+const appCheckSiteKey =
+  typeof __FIREBASE_APP_CHECK_SITE_KEY__ !== 'undefined' ? __FIREBASE_APP_CHECK_SITE_KEY__ : '';
+if (appCheckSiteKey && typeof window !== 'undefined') {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(appCheckSiteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Firebase] App Check init failed:', err);
+  }
+}
+
 export const auth = getAuth(app);
 
 const dbId = (firebaseConfig as any).firestoreDatabaseId;

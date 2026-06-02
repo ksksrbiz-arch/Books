@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-build-test:
+    name: Lint, build, test
+    runs-on: ubuntu-latest
+    env:
+      # Build needs *something* in VITE_FIREBASE_* so the SPA can boot, but
+      # CI does not need real values; the test suite stubs Firebase calls.
+      VITE_FIREBASE_API_KEY: "ci-placeholder"
+      VITE_FIREBASE_PROJECT_ID: "ci-placeholder"
+      VITE_FIREBASE_AUTH_DOMAIN: "ci-placeholder.firebaseapp.com"
+      VITE_FIREBASE_STORAGE_BUCKET: "ci-placeholder.appspot.com"
+      VITE_FIREBASE_APP_ID: "1:0:web:0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Unit / smoke tests
+        run: npm test --if-present

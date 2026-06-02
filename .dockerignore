@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+.env
+.env.*
+generated-images
+daily-prompt-cache.json
+*.log
+coverage
+.DS_Store

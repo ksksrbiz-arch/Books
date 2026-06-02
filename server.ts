@@ -9,12 +9,24 @@ import crypto from "crypto";
 import compression from "compression";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
+import {
+  TEXT_PRIMARY_MODEL,
+  TEXT_FALLBACK_MODEL,
+  TEXT_LIGHT_MODEL,
+  IMAGE_PRIMARY_MODEL,
+  IMAGE_FALLBACK_MODEL,
+  VIDEO_MODEL,
+  OPENAI_FALLBACK_MODEL,
+} from "./config/models";
+import { logger } from "./src/lib/logger";
+import { getRateLimiter, type RateLimiterLike } from "./src/lib/store/rateLimit";
 
 dotenv.config();
 
 // Full-Scale High-Fidelity Performance cache with telemetry and automatic janitor eviction
 class ResponseCache {
   private cache = new Map<string, { data: any, timestamp: number, accesses: number }>();
+  private lastGood = new Map<string, any>();
   private maxItems = 500;
   private maxAgeMs = 1000 * 60 * 60 * 2; // Auto-eviction after 2 hours
   public hits = 0;
@@ -59,6 +71,24 @@ class ResponseCache {
       }
     }
     this.cache.set(key, { data, timestamp: Date.now(), accesses: 1 });
+    // Mirror to long-lived "last good" tier for outage-mode degraded serving.
+    this.lastGood.set(key, data);
+    if (this.lastGood.size > this.maxItems * 2) {
+      const firstKey = this.lastGood.keys().next().value;
+      if (firstKey) this.lastGood.delete(firstKey);
+    }
+  }
+
+  /**
+   * Return the most recently stored value for `key` even if it is past
+   * the TTL or has been evicted from the hot cache. Used as a degraded
+   * fallback when an upstream provider (Gemini) is unavailable so the
+   * user still receives a coherent response instead of an error page.
+   */
+  getStale(key: string) {
+    const fresh = this.cache.get(key);
+    if (fresh) return fresh.data;
+    return this.lastGood.get(key) ?? null;
   }
 
   private runJanitor() {
@@ -145,7 +175,16 @@ class TokenBucketRateLimiter {
 
 const standardLimiter = new TokenBucketRateLimiter(45, 1.5); // Warmly tuned for high-fidelity storytelling speed
 
-const rateLimitingMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+// Pluggable rate limiter (in-memory by default; Redis-backed when REDIS_URL is set)
+let pluggableLimiter: RateLimiterLike | null = null;
+async function getPluggableLimiter(): Promise<RateLimiterLike> {
+  if (!pluggableLimiter) {
+    pluggableLimiter = await getRateLimiter(45, 1.5);
+  }
+  return pluggableLimiter;
+}
+
+const rateLimitingMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   telemetryStats.totalRequests++;
 
   // Throttling simulation via chaos state
@@ -158,7 +197,15 @@ const rateLimitingMiddleware = (req: express.Request, res: express.Response, nex
   }
 
   const clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "anonymous_cli";
-  const { allowed, remainingTokens, limit } = standardLimiter.allowRequest(clientIp);
+  let decision: { allowed: boolean; remainingTokens: number; limit: number };
+  try {
+    const limiter = await getPluggableLimiter();
+    decision = await Promise.resolve(limiter.allowRequest(clientIp));
+  } catch {
+    // Fail open on limiter outage but stay consistent with in-memory bucket
+    decision = standardLimiter.allowRequest(clientIp);
+  }
+  const { allowed, remainingTokens, limit } = decision;
 
   res.setHeader("X-RateLimit-Limit", limit);
   res.setHeader("X-RateLimit-Remaining", remainingTokens);
@@ -276,7 +323,7 @@ const latencyChaosMiddleware = async (req: express.Request, res: express.Respons
 };
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
 
 // Create local directory for generated images to avoid exceeding Firestore limits
 const generatedImagesDir = path.join(process.cwd(), "generated-images");
@@ -288,32 +335,41 @@ if (!fs.existsSync(generatedImagesDir)) {
 let adminAppInitialized = false;
 let globalAdminDb: admin.firestore.Firestore | null = null;
 let globalAdminStorage: admin.storage.Storage | null = null;
-let globalStorageBucketName = "gen-lang-client-0881373762.firebasestorage.app";
+let globalStorageBucketName = process.env.FIREBASE_STORAGE_BUCKET || "";
 
 function initFirebaseAdmin() {
   if (adminAppInitialized) return;
   try {
     console.log("[Firebase Admin] Initializing Admin components...");
     const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    let projectId = "gen-lang-client-0881373762";
-    let databaseId = "ai-studio-590eef94-28a6-4c7a-a01a-cb805945fa19";
-    
+    let projectId = process.env.FIREBASE_PROJECT_ID || "";
+    let databaseId = process.env.FIREBASE_DATABASE_ID || "(default)";
+    if (process.env.FIREBASE_STORAGE_BUCKET) {
+      globalStorageBucketName = process.env.FIREBASE_STORAGE_BUCKET;
+    }
+
     if (fs.existsSync(configPath)) {
       try {
-        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        if (config.projectId) projectId = config.projectId;
-        if (config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
-        if (config.storageBucket) globalStorageBucketName = config.storageBucket;
+        const raw = fs.readFileSync(configPath, "utf-8").trim();
+        const config = raw ? JSON.parse(raw) : {};
+        if (!projectId && config.projectId) projectId = config.projectId;
+        if (databaseId === "(default)" && config.firestoreDatabaseId) databaseId = config.firestoreDatabaseId;
+        if (!process.env.FIREBASE_STORAGE_BUCKET && config.storageBucket) globalStorageBucketName = config.storageBucket;
         console.log("[Firebase Admin] Loaded configurations. Project:", projectId, "DB:", databaseId, "Bucket:", globalStorageBucketName);
       } catch (ex: any) {
         console.error("[Firebase Admin] Config file parsing failed:", ex.message);
       }
     }
 
+    if (!projectId) {
+      console.warn("[Firebase Admin] No projectId configured. Set FIREBASE_PROJECT_ID or populate firebase-applet-config.json.");
+      return;
+    }
+
     admin.initializeApp({
       projectId: projectId,
     });
-    
+
     admin.firestore().settings({
       databaseId: databaseId,
     });
@@ -514,7 +570,7 @@ function getAI() {
       apiKey,
       httpOptions: {
         headers: {
-          'User-Agent': 'aistudio-build',
+          'User-Agent': 'echoes-of-choice',
         }
       }
     });
@@ -565,13 +621,63 @@ function getCleanErrorMessage(error: any): string {
     msg.toLowerCase().includes("spending cap") || 
     msg.toLowerCase().includes("billing account")
   ) {
-    return "Gemini API Quota or Billing Exceeded: The Google AI Studio billing account has exceeded its monthly spending cap. Please go to your AI Studio Billing panel at https://ai.studio/billing to manage or increase your spending cap, or update the API Key in key settings.";
+    return "Generative AI quota or billing limit exceeded. The configured Gemini API key has reached its usage cap or is no longer authorized. Increase your quota in the Google Cloud Console (https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com/quotas) or rotate the key; the system will automatically fall back to alternative models and cached responses in the meantime.";
   }
   return msg;
 }
 
 /**
- * Call Gemini with automatic model fallback if quota is exceeded
+ * Cross-vendor fallback: attempt an OpenAI completion when Gemini is
+ * unavailable. Best-effort only; supports plain text-generation calls.
+ * Returns a Gemini-shaped { text } object so callers don't need to branch.
+ *
+ * Activated only when `OPENAI_API_KEY` is set. Structured-output requests
+ * (responseSchema, image generation) cannot be safely retargeted and will
+ * not be attempted here.
+ */
+async function tryOpenAITextFallback(params: { contents: any; config: any }): Promise<{ text: string } | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  if (params.config?.responseSchema || params.config?.responseMimeType === "application/json") {
+    return null; // structured-output requests are Gemini-specific
+  }
+  try {
+    let prompt = "";
+    if (typeof params.contents === "string") {
+      prompt = params.contents;
+    } else if (Array.isArray(params.contents)) {
+      prompt = params.contents
+        .map((c: any) => (typeof c === "string" ? c : c?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n") || ""))
+        .join("\n");
+    } else if (params.contents?.parts) {
+      prompt = params.contents.parts.map((p: any) => p?.text).filter(Boolean).join("\n");
+    }
+    if (!prompt) return null;
+    const systemInstruction = params.config?.systemInstruction || "";
+    const messages: any[] = [];
+    if (systemInstruction) messages.push({ role: "system", content: String(systemInstruction) });
+    messages.push({ role: "user", content: prompt });
+
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: OPENAI_FALLBACK_MODEL, messages, temperature: params.config?.temperature ?? 0.8 }),
+    });
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) return null;
+    logger.warn(`[CROSS-VENDOR FALLBACK] Gemini unavailable; served response from OpenAI (${OPENAI_FALLBACK_MODEL}).`);
+    return { text };
+  } catch (err) {
+    logger.warn("[CROSS-VENDOR FALLBACK] OpenAI fallback failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Call Gemini with automatic model fallback if quota is exceeded, and a
+ * final cross-vendor fallback (OpenAI) for transient hard outages.
  */
 async function generateContentWithFallback(params: {
   contents: any;
@@ -579,9 +685,9 @@ async function generateContentWithFallback(params: {
   primaryModel?: string;
   fallbackModel?: string;
 }) {
-  const primaryModel = params.primaryModel || "gemini-3.1-pro-preview";
-  const fallbackModel = params.fallbackModel || "gemini-3.5-flash";
-  
+  const primaryModel = params.primaryModel || TEXT_PRIMARY_MODEL;
+  const fallbackModel = params.fallbackModel || TEXT_FALLBACK_MODEL;
+
   try {
     return await callGeminiWithRetry(() => getAI().models.generateContent({
       model: primaryModel,
@@ -592,13 +698,22 @@ async function generateContentWithFallback(params: {
     const errorStr = (error?.message || "").toLowerCase();
     const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || error?.status === 429 || errorStr.includes("resource_exhausted") || errorStr.includes("limit");
     if (isQuotaError && primaryModel !== fallbackModel) {
-      console.warn(`[GEMINI FALLBACK] Primary model ${primaryModel} failed with quota/rate limits. Automatically falling back to standard-free model ${fallbackModel}...`);
-      return await callGeminiWithRetry(() => getAI().models.generateContent({
-        model: fallbackModel,
-        contents: params.contents,
-        config: params.config
-      }));
+      console.warn(`[GEMINI FALLBACK] Primary model ${primaryModel} failed with quota/rate limits. Automatically falling back to ${fallbackModel}...`);
+      try {
+        return await callGeminiWithRetry(() => getAI().models.generateContent({
+          model: fallbackModel,
+          contents: params.contents,
+          config: params.config
+        }));
+      } catch (secondaryError: any) {
+        const fallbackText = await tryOpenAITextFallback(params);
+        if (fallbackText) return fallbackText;
+        throw secondaryError;
+      }
     }
+    // Non-quota errors (5xx, network) — try the cross-vendor fallback.
+    const fallbackText = await tryOpenAITextFallback(params);
+    if (fallbackText) return fallbackText;
     throw error;
   }
 }
@@ -839,8 +954,8 @@ app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
 
   try {
     const response = await generateContentWithFallback({
-      primaryModel: "gemini-3.1-pro-preview",
-      fallbackModel: "gemini-3.5-flash",
+      primaryModel: TEXT_PRIMARY_MODEL,
+      fallbackModel: TEXT_FALLBACK_MODEL,
       contents: prompt,
       config: {
         temperature: 0.9,
@@ -853,6 +968,13 @@ app.post("/api/story/premise", rateLimitingMiddleware, async (req, res) => {
     res.json(data);
   } catch (error: any) {
     console.error("Error generating premises:", getCleanErrorMessage(error));
+    // Degraded mode: serve last-good cached premise for this genre if we
+    // have one, rather than 500ing during a Gemini outage.
+    const stale = apiCache.getStale(cacheKey);
+    if (stale) {
+      res.set("X-Served-From", "stale-cache");
+      return res.json(stale);
+    }
     res.status(500).json({ error: getCleanErrorMessage(error) });
   }
 });
@@ -1193,8 +1315,8 @@ app.post("/api/story/start", rateLimitingMiddleware, async (req, res) => {
 
   try {
     const response = await generateContentWithFallback({
-      primaryModel: "gemini-3.1-pro-preview",
-      fallbackModel: "gemini-3.5-flash",
+      primaryModel: TEXT_PRIMARY_MODEL,
+      fallbackModel: TEXT_FALLBACK_MODEL,
       contents: "Start the first scene of the adventure.",
       config: {
         systemInstruction,
@@ -1437,10 +1559,10 @@ app.post("/api/story/continue", rateLimitingMiddleware, async (req, res) => {
   `;
 
   try {
-    const selectedModel = mode === "light" ? "gemini-3.5-flash" : "gemini-3.1-pro-preview";
+    const selectedModel = mode === "light" ? TEXT_FALLBACK_MODEL : TEXT_PRIMARY_MODEL;
     const response = await generateContentWithFallback({
       primaryModel: selectedModel,
-      fallbackModel: "gemini-3.5-flash",
+      fallbackModel: TEXT_FALLBACK_MODEL,
       contents: prompt,
       config: {
         systemInstruction,
@@ -1635,7 +1757,7 @@ app.get("/api/story/image-serve", async (req, res) => {
 
     // Call Gemini 3.1 Flash Image preview
     const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
+      model: IMAGE_PRIMARY_MODEL,
       contents: {
         parts: [{ text: primaryEnrichedPrompt }],
       },
@@ -1662,7 +1784,7 @@ app.get("/api/story/image-serve", async (req, res) => {
     if (!base64Data) {
       console.log("Self-healing using secondary model (gemini-2.5-flash-image)...");
       const secondaryResponse = await callGeminiWithRetry(() => getAI().models.generateContent({
-        model: 'gemini-2.5-flash-image',
+        model: IMAGE_FALLBACK_MODEL,
         contents: {
           parts: [{ text: primaryEnrichedPrompt }],
         },
@@ -1750,7 +1872,7 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
 
     // Call Gemini Image Generator (Imagen Model or gemini-3.1-flash-image-preview)
     const response = await callGeminiWithRetry(() => getAI().models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
+      model: IMAGE_PRIMARY_MODEL,
       contents: {
         parts: [
           {
@@ -1807,7 +1929,7 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
     try {
       console.log("Invoking secondary visual stream prompt via gemini-2.5-flash-image...");
       const secondaryResponse = await callGeminiWithRetry(() => getAI().models.generateContent({
-        model: 'gemini-2.5-flash-image',
+        model: IMAGE_FALLBACK_MODEL,
         contents: {
           parts: [{ text: primaryEnrichedPrompt }],
         },
@@ -1859,7 +1981,7 @@ app.post("/api/story/image", rateLimitingMiddleware, async (req, res) => {
       try {
         console.log("Invoking fallback visual stream prompt via gemini-2.5-flash-image:", fallbackPrompt);
         const fallbackResponse = await callGeminiWithRetry(() => getAI().models.generateContent({
-          model: 'gemini-2.5-flash-image',
+          model: IMAGE_FALLBACK_MODEL,
           contents: {
             parts: [{ text: fallbackPrompt }],
           },
@@ -2106,8 +2228,8 @@ app.post("/api/story/converse", rateLimitingMiddleware, async (req, res) => {
     `;
 
     const response = await generateContentWithFallback({
-      primaryModel: "gemini-3.1-pro-preview",
-      fallbackModel: "gemini-3.5-flash",
+      primaryModel: TEXT_PRIMARY_MODEL,
+      fallbackModel: TEXT_FALLBACK_MODEL,
       contents: prompt,
       config: {
         systemInstruction,
@@ -2507,7 +2629,7 @@ app.get("/api/story/daily-prompt", async (req, res) => {
   try {
     console.log(`[DailyPrompt] Cache missed for date: ${todayStr}. Initiating Gemini synthesis...`);
     const response = await generateContentWithFallback({
-      primaryModel: "gemini-3.5-flash", // Good for creative prompt generation
+      primaryModel: TEXT_FALLBACK_MODEL, // Good for creative prompt generation
       contents: promptText,
       config: {
         temperature: 1.0, // High flexibility & creativity
@@ -2561,6 +2683,68 @@ app.get("/api/story/daily-prompt", async (req, res) => {
   }
 });
 
+// ----- Liveness / readiness / metrics endpoints (platform health checks) -----
+
+// Liveness: process is up and the event loop is responsive.
+app.get("/healthz", (_req, res) => {
+  res.status(200).json({ status: "ok", uptime: process.uptime() });
+});
+
+// Readiness: the dependencies needed to serve real traffic are reachable.
+// - Firebase Admin must be initialisable (lazy-init runs here)
+// - GEMINI_API_KEY (or a cross-vendor key) must be configured
+app.get("/readyz", async (_req, res) => {
+  const checks: Record<string, string> = {};
+  let ok = true;
+  try {
+    initFirebaseAdmin();
+    checks.firebaseAdmin = adminAppInitialized ? "ok" : "uninitialized";
+    if (!adminAppInitialized) ok = false;
+  } catch (err: any) {
+    checks.firebaseAdmin = `error:${err.message}`;
+    ok = false;
+  }
+  if (process.env.GEMINI_API_KEY) {
+    checks.gemini = "key-configured";
+  } else if (process.env.OPENAI_API_KEY) {
+    checks.gemini = "missing-but-openai-fallback-available";
+  } else {
+    checks.gemini = "no-ai-key-configured";
+    ok = false;
+  }
+  res.status(ok ? 200 : 503).json({ status: ok ? "ready" : "not-ready", checks });
+});
+
+// Prometheus-format metrics. Kept minimal & dependency-free so it can be
+// scraped by Google Cloud Monitoring, Grafana Cloud, Datadog, etc.
+app.get("/metrics", (_req, res) => {
+  const mem = process.memoryUsage();
+  const cs = apiCache.getStats();
+  const qs = asyncTaskQueue.getTelemetry();
+  const lines: string[] = [];
+  const m = (name: string, help: string, type: string, value: number, labels = "") => {
+    lines.push(`# HELP ${name} ${help}`);
+    lines.push(`# TYPE ${name} ${type}`);
+    lines.push(`${name}${labels} ${value}`);
+  };
+  m("process_uptime_seconds", "Process uptime in seconds", "gauge", process.uptime());
+  m("process_heap_used_bytes", "Node heap used bytes", "gauge", mem.heapUsed);
+  m("process_rss_bytes", "Node resident set size bytes", "gauge", mem.rss);
+  m("http_requests_total", "Total HTTP requests handled (rate-limited paths only)", "counter", telemetryStats.totalRequests);
+  m("http_requests_failed_total", "Total HTTP requests that failed rate-limit", "counter", telemetryStats.failedRequests);
+  m("chaos_auth_outages_induced_total", "Simulated auth outages induced", "counter", telemetryStats.authOutagesInduced);
+  m("chaos_latency_injections_total", "Latency injections induced", "counter", telemetryStats.latencyTimesInduced);
+  m("cache_items", "Cache items currently held", "gauge", cs.totalItems);
+  m("cache_hits_total", "Cache hits", "counter", cs.hits);
+  m("cache_misses_total", "Cache misses", "counter", cs.misses);
+  m("cache_evictions_total", "Cache evictions", "counter", cs.evictions);
+  m("async_queue_active", "Async queue active tasks", "gauge", qs.activeCount);
+  m("async_queue_queued", "Async queue idle tasks", "gauge", qs.queuedCount);
+  m("async_queue_succeeded_total", "Async queue tasks succeeded", "counter", qs.succeededCount);
+  m("async_queue_failed_total", "Async queue tasks failed", "counter", qs.failedCount);
+  res.set("Content-Type", "text/plain; version=0.0.4").send(lines.join("\n") + "\n");
+});
+
 // Global Error Handling Middleware (Production Hardening & Crash Shield)
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("[Uncaught Express Exception]:", err);
@@ -2586,9 +2770,32 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const httpServer = app.listen(PORT, "0.0.0.0", () => {
+    logger.info(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown: stop accepting new requests, drain in-flight async
+  // jobs (best-effort, bounded), then exit. Platforms send SIGTERM before
+  // killing the container.
+  const shutdown = async (signal: string) => {
+    logger.info(`[shutdown] received ${signal}; closing HTTP server...`);
+    httpServer.close(() => logger.info("[shutdown] HTTP server closed"));
+    const deadline = Date.now() + 25_000;
+    let lastLog = 0;
+    while (Date.now() < deadline) {
+      const tel = asyncTaskQueue.getTelemetry();
+      if (tel.activeCount === 0 && tel.queuedCount === 0) break;
+      if (Date.now() - lastLog > 5000) {
+        logger.info(`[shutdown] waiting for async jobs to drain (active=${tel.activeCount} queued=${tel.queuedCount})`);
+        lastLog = Date.now();
+      }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    logger.info("[shutdown] drained async jobs; exiting");
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer();
