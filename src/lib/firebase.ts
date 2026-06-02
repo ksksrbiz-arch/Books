@@ -11,7 +11,8 @@ import fileFirebaseConfig from '../../firebase-applet-config.json';
 declare const __FIREBASE_CONFIG__: Record<string, string> | undefined;
 declare const __FIREBASE_APP_CHECK_SITE_KEY__: string | undefined;
 
-const injectedConfig = (typeof __FIREBASE_CONFIG__ !== 'undefined' && __FIREBASE_CONFIG__) || {};
+const injectedConfig: Record<string, string> =
+  typeof __FIREBASE_CONFIG__ !== 'undefined' && __FIREBASE_CONFIG__ ? __FIREBASE_CONFIG__ : {};
 const firebaseConfig = { ...(fileFirebaseConfig as Record<string, string>), ...injectedConfig };
 
 if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {

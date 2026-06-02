@@ -14,16 +14,8 @@ describe("config/models", () => {
     expect(MODEL_IDS.OPENAI_FALLBACK_MODEL).toBeTruthy();
   });
 
-  it("respects env overrides", async () => {
-    // Re-import after mutation by using a fresh module instance via the
-    // ECMAScript module cache trick (vite-node).
-    process.env.GEMINI_TEXT_PRIMARY_MODEL = "override-primary";
-    const mod = await import("../config/models?env-override" as string).catch(() => null);
-    // Even if dynamic import-with-query isn't supported, the static import
-    // gives us the original; this assertion just demonstrates the contract.
-    expect(MODEL_IDS.TEXT_PRIMARY_MODEL.length).toBeGreaterThan(0);
-    delete process.env.GEMINI_TEXT_PRIMARY_MODEL;
-    void mod;
+  it("primary and fallback text models are distinct so quota fallback is meaningful", () => {
+    expect(MODEL_IDS.TEXT_PRIMARY_MODEL).not.toBe(MODEL_IDS.TEXT_FALLBACK_MODEL);
   });
 });
 

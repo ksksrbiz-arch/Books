@@ -2781,9 +2781,14 @@ async function startServer() {
     logger.info(`[shutdown] received ${signal}; closing HTTP server...`);
     httpServer.close(() => logger.info("[shutdown] HTTP server closed"));
     const deadline = Date.now() + 25_000;
+    let lastLog = 0;
     while (Date.now() < deadline) {
       const tel = asyncTaskQueue.getTelemetry();
       if (tel.activeCount === 0 && tel.queuedCount === 0) break;
+      if (Date.now() - lastLog > 5000) {
+        logger.info(`[shutdown] waiting for async jobs to drain (active=${tel.activeCount} queued=${tel.queuedCount})`);
+        lastLog = Date.now();
+      }
       await new Promise(r => setTimeout(r, 250));
     }
     logger.info("[shutdown] drained async jobs; exiting");
