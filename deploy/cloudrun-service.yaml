@@ -1,0 +1,104 @@
+# Google Cloud Run service manifest for Echoes of Choice Adventure.
+#
+# Apply with:
+#   gcloud run services replace deploy/cloudrun-service.yaml --region us-central1
+#   gcloud run services replace deploy/cloudrun-service.yaml --region europe-west1
+#
+# Then put both regional services behind a global external HTTPS Load Balancer
+# (https://cloud.google.com/run/docs/multiple-regions) for region-failover HA.
+#
+# Secrets MUST be created in Secret Manager first, e.g.:
+#   echo -n "<key>" | gcloud secrets create gemini-api-key --data-file=-
+#   echo -n "<key>" | gcloud secrets create stripe-secret-key --data-file=-
+#   echo -n "<key>" | gcloud secrets create stripe-webhook-secret --data-file=-
+#   echo -n "<key>" | gcloud secrets create openai-api-key --data-file=-
+#   echo -n "<key>" | gcloud secrets create elevenlabs-api-key --data-file=-
+# and the service account must have roles/secretmanager.secretAccessor on each.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: echoes-of-choice
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        # >=2 idle instances => no cold-start gaps, real HA
+        autoscaling.knative.dev/minScale: "2"
+        autoscaling.knative.dev/maxScale: "20"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 60
+      timeoutSeconds: 120
+      # Attach a dedicated service account (with roles/datastore.user,
+      # roles/storage.objectAdmin, roles/secretmanager.secretAccessor).
+      serviceAccountName: echoes-of-choice@PROJECT_ID.iam.gserviceaccount.com
+      containers:
+        - image: gcr.io/PROJECT_ID/echoes-of-choice:latest
+          ports:
+            - name: http1
+              containerPort: 3000
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: APP_URL
+              value: https://echoes.example.com
+            - name: FIREBASE_PROJECT_ID
+              value: PROJECT_ID
+            - name: FIREBASE_STORAGE_BUCKET
+              value: PROJECT_ID.firebasestorage.app
+            - name: REDIS_URL
+              value: redis://10.0.0.3:6379   # Memorystore private IP
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: latest
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stripe-secret-key
+                  key: latest
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stripe-webhook-secret
+                  key: latest
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-api-key
+                  key: latest
+            - name: ELEVENLABS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: elevenlabs-api-key
+                  key: latest
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 3
+  traffic:
+    - percent: 100
+      latestRevision: true

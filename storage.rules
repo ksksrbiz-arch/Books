@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Per-user story step images
+    match /users/{userId}/stories/{storyId}/steps/{stepId} {
+      allow read, write: if isOwner(userId)
+                        && request.resource.size < 15 * 1024 * 1024
+                        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Server-uploaded generated images cache (Admin SDK only)
+    match /generated-images/{filename} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Global lock-down for anything not explicitly allowed above
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
